@@ -1,0 +1,467 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  OWNER
+  ADMIN
+  RECEPTIONIST
+  TECHNICIAN
+  PATHOLOGIST
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum BloodGroup {
+  A_POS
+  A_NEG
+  B_POS
+  B_NEG
+  AB_POS
+  AB_NEG
+  O_POS
+  O_NEG
+}
+
+enum OrderStatus {
+  NEW
+  SAMPLE_COLLECTED
+  PROCESSING
+  RESULT_ENTERED
+  UNDER_REVIEW
+  APPROVED
+  REPORT_READY
+  CANCELLED
+}
+
+enum OrderItemStatus {
+  PENDING
+  SAMPLE_COLLECTED
+  PROCESSING
+  RESULT_ENTERED
+  APPROVED
+  CANCELLED
+}
+
+enum SampleStatus {
+  PENDING
+  COLLECTED
+  PROCESSING
+  COMPLETED
+  REJECTED
+  RECOLLECTION_REQUESTED
+}
+
+enum ResultStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum ReportStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  DELIVERED
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  BANK_TRANSFER
+}
+
+enum AdjustmentType {
+  DISCOUNT
+  REVERSAL
+  CANCELLATION
+}
+
+enum AuditAction {
+  USER_LOGIN
+  USER_LOGOUT
+  USER_CREATED
+  USER_UPDATED
+  USER_DEACTIVATED
+  PASSWORD_RESET
+  PASSWORD_CHANGED
+  PATIENT_CREATED
+  PATIENT_UPDATED
+  TEST_CREATED
+  TEST_UPDATED
+  TEST_DEACTIVATED
+  PACKAGE_CREATED
+  PACKAGE_UPDATED
+  ORDER_CREATED
+  ORDER_CANCELLED
+  SAMPLE_STATUS_CHANGED
+  RESULT_ENTERED
+  RESULT_SUBMITTED
+  RESULT_APPROVED
+  RESULT_REJECTED
+  REPORT_GENERATED
+  REPORT_APPROVED
+  REPORT_DELIVERED
+  INVOICE_CREATED
+  DISCOUNT_APPLIED
+  INVOICE_CANCELLED
+  PAYMENT_RECORDED
+  PAYMENT_REVERSED
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  employeeCode String   @unique
+  firstName    String
+  lastName     String
+  email        String   @unique
+  phone        String
+  passwordHash String
+  role         Role
+  isActive     Boolean  @default(true)
+  mustChangePassword Boolean @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  createdOrders    LabOrder[]           @relation("OrderCreatedBy")
+  collectedSamples Sample[]             @relation("SampleCollectedBy")
+  enteredResults   TestResult[]         @relation("ResultEnteredBy")
+  reviewedResults  TestResult[]         @relation("ResultReviewedBy")
+  approvedReports  LabReport[]          @relation("ReportApprovedBy")
+  createdInvoices  Invoice[]            @relation("InvoiceCreatedBy")
+  recordedPayments Payment[]            @relation("PaymentRecordedBy")
+  adjustments      FinancialAdjustment[] @relation("AdjustmentAuthorizedBy")
+  auditEvents      AuditEvent[]         @relation("AuditActor")
+
+  @@map("users")
+}
+
+model Patient {
+  id          String     @id @default(uuid())
+  patientCode String     @unique
+  firstName   String
+  lastName    String
+  phone       String
+  email       String?
+  dateOfBirth DateTime
+  gender      Gender
+  bloodGroup  BloodGroup?
+  address     String?
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  orders   LabOrder[]
+  invoices Invoice[]
+
+  @@index([phone])
+  @@index([firstName, lastName])
+  @@map("patients")
+}
+
+model TestCategory {
+  id    String    @id @default(uuid())
+  name  String    @unique
+  code  String    @unique
+  tests LabTest[]
+
+  @@map("test_categories")
+}
+
+model LabTest {
+  id              String   @id @default(uuid())
+  code            String   @unique
+  name            String
+  categoryId      String
+  specimenType    String
+  department      String
+  price           Decimal  @db.Decimal(12, 2)
+  turnaroundHours Int      @default(24)
+  isActive        Boolean  @default(true)
+  description     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  category     TestCategory     @relation(fields: [categoryId], references: [id])
+  parameters   TestParameter[]
+  orderItems   LabOrderItem[]
+  packageItems TestPackageItem[]
+
+  @@index([categoryId])
+  @@index([isActive])
+  @@map("lab_tests")
+}
+
+model TestParameter {
+  id                 String   @id @default(uuid())
+  labTestId          String
+  name               String
+  unit               String?
+  referenceRangeLow  Decimal? @db.Decimal(10, 4)
+  referenceRangeHigh Decimal? @db.Decimal(10, 4)
+  referenceRangeText String?
+  sortOrder          Int      @default(0)
+
+  labTest          LabTest           @relation(fields: [labTestId], references: [id])
+  resultParameters ResultParameter[]
+
+  @@index([labTestId])
+  @@map("test_parameters")
+}
+
+model TestPackage {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  price       Decimal  @db.Decimal(12, 2)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items TestPackageItem[]
+
+  @@map("test_packages")
+}
+
+model TestPackageItem {
+  id        String @id @default(uuid())
+  packageId String
+  labTestId String
+
+  package TestPackage @relation(fields: [packageId], references: [id])
+  labTest LabTest     @relation(fields: [labTestId], references: [id])
+
+  @@unique([packageId, labTestId])
+  @@map("test_package_items")
+}
+
+model LabOrder {
+  id           String      @id @default(uuid())
+  orderNumber  String      @unique
+  patientId    String
+  status       OrderStatus @default(NEW)
+  notes        String?
+  createdById  String
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  cancelledAt  DateTime?
+  cancelReason String?
+
+  patient   Patient        @relation(fields: [patientId], references: [id])
+  createdBy User           @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  items     LabOrderItem[]
+  samples   Sample[]
+  invoice   Invoice?
+  report    LabReport?
+
+  @@index([patientId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("lab_orders")
+}
+
+model LabOrderItem {
+  id               String          @id @default(uuid())
+  orderId          String
+  labTestId        String
+  testNameSnapshot String
+  priceSnapshot    Decimal         @db.Decimal(12, 2)
+  status           OrderItemStatus @default(PENDING)
+
+  order       LabOrder     @relation(fields: [orderId], references: [id])
+  labTest     LabTest      @relation(fields: [labTestId], references: [id])
+  result      TestResult?
+  invoiceItem InvoiceItem?
+
+  @@index([orderId])
+  @@map("lab_order_items")
+}
+
+model Sample {
+  id              String       @id @default(uuid())
+  sampleId        String       @unique
+  orderId         String
+  collectedById   String?
+  collectedAt     DateTime?
+  status          SampleStatus @default(PENDING)
+  rejectionReason String?
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  order       LabOrder @relation(fields: [orderId], references: [id])
+  collectedBy User?    @relation("SampleCollectedBy", fields: [collectedById], references: [id])
+
+  @@index([orderId])
+  @@index([status])
+  @@map("samples")
+}
+
+model TestResult {
+  id              String       @id @default(uuid())
+  orderItemId     String       @unique
+  enteredById     String
+  enteredAt       DateTime     @default(now())
+  reviewedById    String?
+  reviewedAt      DateTime?
+  status          ResultStatus @default(DRAFT)
+  rejectionReason String?
+  notes           String?
+
+  orderItem   LabOrderItem      @relation(fields: [orderItemId], references: [id])
+  enteredBy   User              @relation("ResultEnteredBy", fields: [enteredById], references: [id])
+  reviewedBy  User?             @relation("ResultReviewedBy", fields: [reviewedById], references: [id])
+  parameters  ResultParameter[]
+
+  @@map("test_results")
+}
+
+model ResultParameter {
+  id              String  @id @default(uuid())
+  testResultId    String
+  testParameterId String
+  value           String
+  unit            String?
+  isAbnormal      Boolean @default(false)
+
+  testResult    TestResult    @relation(fields: [testResultId], references: [id])
+  testParameter TestParameter @relation(fields: [testParameterId], references: [id])
+
+  @@index([testResultId])
+  @@map("result_parameters")
+}
+
+model LabReport {
+  id           String       @id @default(uuid())
+  orderId      String       @unique
+  approvedById String?
+  approvedAt   DateTime?
+  generatedAt  DateTime?
+  pdfPath      String?
+  status       ReportStatus @default(DRAFT)
+  createdAt    DateTime     @default(now())
+
+  order      LabOrder @relation(fields: [orderId], references: [id])
+  approvedBy User?    @relation("ReportApprovedBy", fields: [approvedById], references: [id])
+
+  @@map("lab_reports")
+}
+
+model Invoice {
+  id             String        @id @default(uuid())
+  invoiceNumber  String        @unique
+  orderId        String        @unique
+  patientId      String
+  subtotal       Decimal       @db.Decimal(12, 2)
+  discountAmount Decimal       @db.Decimal(12, 2) @default(0)
+  totalAmount    Decimal       @db.Decimal(12, 2)
+  paidAmount     Decimal       @db.Decimal(12, 2) @default(0)
+  status         InvoiceStatus @default(UNPAID)
+  createdById    String
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  cancelledAt    DateTime?
+
+  order       LabOrder              @relation(fields: [orderId], references: [id])
+  patient     Patient               @relation(fields: [patientId], references: [id])
+  createdBy   User                  @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
+  items       InvoiceItem[]
+  payments    Payment[]
+  adjustments FinancialAdjustment[]
+
+  @@index([patientId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id               String  @id @default(uuid())
+  invoiceId        String
+  orderItemId      String  @unique
+  testNameSnapshot String
+  priceSnapshot    Decimal @db.Decimal(12, 2)
+  quantity         Int     @default(1)
+
+  invoice   Invoice      @relation(fields: [invoiceId], references: [id])
+  orderItem LabOrderItem @relation(fields: [orderItemId], references: [id])
+
+  @@index([invoiceId])
+  @@map("invoice_items")
+}
+
+model Payment {
+  id              String        @id @default(uuid())
+  invoiceId       String
+  amount          Decimal       @db.Decimal(12, 2)
+  method          PaymentMethod
+  referenceNumber String?
+  notes           String?
+  recordedById    String
+  paidAt          DateTime      @default(now())
+  isReversed      Boolean       @default(false)
+  reversedAt      DateTime?
+
+  invoice    Invoice @relation(fields: [invoiceId], references: [id])
+  recordedBy User    @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+
+  @@index([invoiceId])
+  @@index([paidAt])
+  @@map("payments")
+}
+
+model FinancialAdjustment {
+  id             String         @id @default(uuid())
+  invoiceId      String
+  type           AdjustmentType
+  amount         Decimal        @db.Decimal(12, 2)
+  reason         String
+  authorizedById String
+  createdAt      DateTime       @default(now())
+
+  invoice      Invoice @relation(fields: [invoiceId], references: [id])
+  authorizedBy User    @relation("AdjustmentAuthorizedBy", fields: [authorizedById], references: [id])
+
+  @@index([invoiceId])
+  @@map("financial_adjustments")
+}
+
+model AuditEvent {
+  id         String      @id @default(uuid())
+  actorId    String
+  action     AuditAction
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime    @default(now())
+
+  actor User @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_events")
+}
