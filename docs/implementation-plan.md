@@ -94,12 +94,15 @@ remain pending.**
 
 ## Phase 5 — Results and reports
 
-**Not verified; implementation and approval tests remain.**
+**Implementation and focused unit/UI tests complete; live database/browser verification remains.**
 
-- [ ] Complete result entry/review/approval and report lifecycle.
-- [ ] Verify an unapproved result cannot appear as a final report.
-- [ ] Build result and report screens and PDF download flow.
-- [ ] Seed clearly fictional example results and reports.
+- [x] Add result draft entry, server-side abnormal flags, submission, review, approval, and rejection/re-entry state transitions.
+- [x] Restrict result entry/review/report actions to their required roles on the API and in navigation/UI.
+- [x] Prevent report generation unless every order item has an approved result.
+- [x] Build report generation, approval, authenticated PDF delivery, and delivery audit events.
+- [x] Add illustrative demo parameter ranges, a submitted review example, and a report-awaiting-approval example to the idempotent seed.
+- [x] Add focused results/report service and role-aware UI tests.
+- [ ] Verify the seeded workflow against a clean local PostgreSQL database and exercise it in the browser.
 
 ## Phase 6 — Dashboard and operational monitoring
 

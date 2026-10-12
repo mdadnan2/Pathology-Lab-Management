@@ -228,10 +228,7 @@ export class OrdersService {
       include: {
         patient: true,
         items: {
-          include: {
-            labTest: { include: { parameters: true } },
-            result: { include: { parameters: true, enteredBy: { select: { firstName: true, lastName: true } } } },
-          },
+          include: { labTest: { include: { parameters: true } } },
         },
         samples: { include: { collectedBy: { select: { firstName: true, lastName: true } } } },
         invoice: { include: { items: true, payments: true } },

@@ -58,6 +58,7 @@ describe('ResultsService', () => {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'result-1' }),
         update: jest.fn().mockResolvedValue({ id: 'result-1' }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       resultParameter: {
         deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -90,6 +91,7 @@ describe('ResultsService', () => {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'result-1' }),
         update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       resultParameter: {
         deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -131,6 +133,34 @@ describe('ResultsService', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it('does not allow a submitted result to be edited before review', async () => {
+    prisma.labOrderItem.findUnique.mockResolvedValue(item({
+      result: { id: 'result-1', status: ResultStatus.SUBMITTED },
+    }));
+    await expect(service.saveDraft('item-1', {
+      parameters: [{ testParameterId: 'parameter-1', value: '15' }],
+    }, 'technician-1')).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('limits Technician result listings to their own results plus unentered items', async () => {
+    await service.findAll({
+      page: 1,
+      limit: 10,
+      actorId: 'technician-1',
+      isTechnician: true,
+    });
+
+    expect(prisma.labOrderItem.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        OR: [
+          { result: { is: null } },
+          { result: { is: { enteredById: 'technician-1' } } },
+        ],
+      }),
+    }));
+  });
+
   it('requires all configured parameters before submission', async () => {
     prisma.testResult.findUnique.mockResolvedValue({
       id: 'result-1',
@@ -138,6 +168,7 @@ describe('ResultsService', () => {
       parameters: [],
       orderItem: {
         id: 'item-1',
+        order: { status: OrderStatus.PROCESSING },
         labTest: { parameters: [{ id: 'parameter-1' }] },
       },
     });
@@ -145,26 +176,106 @@ describe('ResultsService', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it('submits complete draft results with a conditional state update', async () => {
+    prisma.testResult.findUnique.mockResolvedValue({
+      id: 'result-1',
+      status: ResultStatus.DRAFT,
+      parameters: [{ testParameterId: 'parameter-1', value: '15' }],
+      orderItem: {
+        id: 'item-1',
+        orderId: 'order-1',
+        order: { status: OrderStatus.PROCESSING },
+        labTest: { parameters: [{ id: 'parameter-1' }] },
+      },
+    });
+    const tx = {
+      testResult: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUnique: jest.fn().mockResolvedValue({ id: 'result-1' }),
+      },
+      labOrderItem: { update: jest.fn().mockResolvedValue({}) },
+      labOrder: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    };
+    prisma.$transaction.mockImplementation(
+      (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
+    );
+
+    await service.submit('result-1', 'technician-1');
+
+    expect(tx.testResult.updateMany).toHaveBeenCalledWith({
+      where: { id: 'result-1', status: ResultStatus.DRAFT },
+      data: { status: ResultStatus.SUBMITTED, rejectionReason: null },
+    });
+    expect(auditService.log).toHaveBeenCalledWith(expect.objectContaining({
+      action: AuditAction.RESULT_SUBMITTED,
+    }));
+  });
+
   it('requires results to enter review before approval', async () => {
     prisma.testResult.findUnique.mockResolvedValue({
       id: 'result-1',
       status: ResultStatus.SUBMITTED,
-      orderItem: { id: 'item-1', orderId: 'order-1' },
+      orderItem: {
+        id: 'item-1',
+        orderId: 'order-1',
+        order: { status: OrderStatus.PROCESSING },
+      },
     });
     await expect(service.review('result-1', { status: 'APPROVED' }, 'pathologist-1'))
       .rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('requires a rejection reason', async () => {
+    prisma.testResult.findUnique.mockResolvedValue({
+      id: 'result-1',
+      status: ResultStatus.UNDER_REVIEW,
+      orderItemId: 'item-1',
+      orderItem: {
+        id: 'item-1',
+        orderId: 'order-1',
+        order: { status: OrderStatus.PROCESSING },
+      },
+    });
+    await expect(service.review('result-1', { status: 'REJECTED' }, 'pathologist-1'))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('approves an under-review result and marks its order item approved', async () => {
     prisma.testResult.findUnique.mockResolvedValue({
       id: 'result-1',
       status: ResultStatus.UNDER_REVIEW,
-      orderItem: { id: 'item-1', orderId: 'order-1' },
+      orderItemId: 'item-1',
+      orderItem: {
+        id: 'item-1',
+        orderId: 'order-1',
+        order: { status: OrderStatus.PROCESSING },
+      },
     });
+    const tx = {
+      testResult: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUnique: jest.fn().mockResolvedValue({ id: 'result-1' }),
+      },
+      labOrderItem: {
+        update: jest.fn().mockResolvedValue({}),
+        findMany: jest.fn().mockResolvedValue([{ status: OrderItemStatus.APPROVED }]),
+      },
+      labOrder: { update: jest.fn().mockResolvedValue({}) },
+    };
+    prisma.$transaction.mockImplementation(
+      (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
+    );
 
     await service.review('result-1', { status: 'APPROVED' }, 'pathologist-1');
 
-    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(tx.testResult.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'result-1', status: ResultStatus.UNDER_REVIEW },
+    }));
+    expect(tx.labOrderItem.update).toHaveBeenCalledWith({
+      where: { id: 'item-1' },
+      data: { status: OrderItemStatus.APPROVED },
+    });
     expect(auditService.log).toHaveBeenCalledWith(expect.objectContaining({
       action: AuditAction.RESULT_APPROVED,
       entityId: 'result-1',

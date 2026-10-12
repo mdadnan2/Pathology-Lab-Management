@@ -11,6 +11,8 @@ describe('ReportsService', () => {
   const prisma = {
     labOrder: {
       findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
       update: jest.fn(),
     },
     labReport: {
@@ -19,6 +21,7 @@ describe('ReportsService', () => {
       findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     $transaction: jest.fn(),
   };
@@ -28,13 +31,21 @@ describe('ReportsService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     const tx = {
-      labReport: { update: jest.fn().mockResolvedValue({ id: 'report-1' }) },
-      labOrder: { update: jest.fn().mockResolvedValue({}) },
+      labReport: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'report-1', status: ReportStatus.APPROVED }),
+        create: jest.fn().mockResolvedValue({ id: 'report-1', status: ReportStatus.PENDING_APPROVAL }),
+        update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      labOrder: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     };
     prisma.$transaction.mockImplementation(
       (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
     );
     auditService.log.mockResolvedValue(undefined);
+    prisma.labOrder.findMany.mockResolvedValue([]);
+    prisma.labOrder.count.mockResolvedValue(0);
+    prisma.labReport.updateMany.mockResolvedValue({ count: 1 });
     service = new ReportsService(
       prisma as unknown as PrismaService,
       auditService as unknown as AuditService,
@@ -53,7 +64,7 @@ describe('ReportsService', () => {
 
     await expect(service.generate('order-1', 'pathologist-1'))
       .rejects.toBeInstanceOf(BadRequestException);
-    expect(prisma.labReport.create).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('generates a pending-approval report only when every result is approved', async () => {
@@ -64,13 +75,25 @@ describe('ReportsService', () => {
       items: [{ result: { status: ResultStatus.APPROVED } }],
     });
     prisma.labReport.findUnique.mockResolvedValue(null);
-    prisma.labReport.create.mockResolvedValue({ id: 'report-1', status: ReportStatus.PENDING_APPROVAL });
+    const tx = {
+      labReport: {
+        create: jest.fn().mockResolvedValue({ id: 'report-1', status: ReportStatus.PENDING_APPROVAL }),
+      },
+      labOrder: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    };
+    prisma.$transaction.mockImplementation(
+      (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
+    );
 
     await service.generate('order-1', 'pathologist-1');
 
-    expect(prisma.labReport.create).toHaveBeenCalledWith(expect.objectContaining({
+    expect(tx.labReport.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: ReportStatus.PENDING_APPROVAL }),
     }));
+    expect(tx.labOrder.updateMany).toHaveBeenCalledWith({
+      where: { id: 'order-1', status: { not: OrderStatus.CANCELLED } },
+      data: { status: OrderStatus.APPROVED },
+    });
     expect(auditService.log).toHaveBeenCalledWith(expect.objectContaining({
       action: AuditAction.REPORT_GENERATED,
       entityId: 'report-1',
@@ -86,6 +109,62 @@ describe('ReportsService', () => {
     await expect(service.approve('report-1', 'pathologist-1'))
       .rejects.toBeInstanceOf(ConflictException);
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('approves a pending report and advances the order', async () => {
+    prisma.labReport.findUnique.mockResolvedValue({
+      id: 'report-1',
+      orderId: 'order-1',
+      status: ReportStatus.PENDING_APPROVAL,
+      order: { status: OrderStatus.APPROVED },
+    });
+
+    await service.approve('report-1', 'pathologist-1');
+
+    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(auditService.log).toHaveBeenCalledWith(expect.objectContaining({
+      action: AuditAction.REPORT_APPROVED,
+    }));
+  });
+
+  it('prevents approval if another request changed the report status', async () => {
+    prisma.labReport.findUnique.mockResolvedValue({
+      id: 'report-1',
+      orderId: 'order-1',
+      status: ReportStatus.PENDING_APPROVAL,
+      order: { status: OrderStatus.APPROVED },
+    });
+    prisma.$transaction.mockImplementation(
+      async (callback: (transaction: {
+        labReport: {
+          updateMany: jest.Mock;
+          findUnique: jest.Mock;
+          update: jest.Mock;
+        };
+        labOrder: { updateMany: jest.Mock };
+      }) => Promise<unknown>) => callback({
+        labReport: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+          findUnique: jest.fn(),
+          update: jest.fn(),
+        },
+        labOrder: { updateMany: jest.fn() },
+      }),
+    );
+
+    await expect(service.approve('report-1', 'pathologist-1'))
+      .rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('offers only approved orders without existing reports for generation', async () => {
+    await service.findEligibleOrders({ page: 1, limit: 10 });
+
+    expect(prisma.labOrder.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        status: { not: OrderStatus.CANCELLED },
+        report: { is: null },
+      }),
+    }));
   });
 
   it('delivers an approved report PDF and records delivery once', async () => {
@@ -129,8 +208,8 @@ describe('ReportsService', () => {
     const pdf = await service.download('report-1', 'receptionist-1');
 
     expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
-    expect(prisma.labReport.update).toHaveBeenCalledWith({
-      where: { id: 'report-1' },
+    expect(prisma.labReport.updateMany).toHaveBeenCalledWith({
+      where: { id: 'report-1', status: ReportStatus.APPROVED },
       data: { status: ReportStatus.DELIVERED },
     });
     expect(auditService.log).toHaveBeenCalledWith(expect.objectContaining({

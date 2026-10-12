@@ -222,6 +222,12 @@ function ResultItem({
               );
               const range = parameter.referenceRangeText
                 ?? `${parameter.referenceRangeLow ?? "—"} – ${parameter.referenceRangeHigh ?? "—"}`;
+              const abnormalDirection = savedValue?.isAbnormal
+                ? parameter.referenceRangeLow !== null &&
+                  Number(savedValue.value) < Number(parameter.referenceRangeLow)
+                  ? "low"
+                  : "high"
+                : null;
               return (
                 <label className="space-y-1 text-sm" htmlFor={`${item.id}-${parameter.id}`} key={parameter.id}>
                   <span className="font-medium">{parameter.name} {parameter.unit ? `(${parameter.unit})` : ""}</span>
@@ -234,7 +240,12 @@ function ResultItem({
                   />
                   <span className="block text-xs text-muted-foreground">
                     Illustrative reference range: {range}
-                    {savedValue?.isAbnormal ? " · Outside range" : ""}
+                    {abnormalDirection === "low" && (
+                      <span className="ml-1 font-semibold text-blue-700">↓ Low</span>
+                    )}
+                    {abnormalDirection === "high" && (
+                      <span className="ml-1 font-semibold text-red-700">↑ High</span>
+                    )}
                   </span>
                 </label>
               );

@@ -20,11 +20,15 @@ export default function ReportsPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [selectedOrderId, setSelectedOrderId] = useState("");
+  const [statusFilter, setStatusFilter] = useState<LabReport["status"] | "">("");
+  const [search, setSearch] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const profile = useQuery({ queryKey: ["auth", "me"], queryFn: getCurrentUser });
   const reports = useQuery({
-    queryKey: ["reports", page],
-    queryFn: () => listReports({ page, limit: 10 }),
+    queryKey: ["reports", page, statusFilter, search, from, to],
+    queryFn: () => listReports({ page, limit: 10, status: statusFilter, search, from, to }),
   });
   const canApprove = profile.data
     ? ["OWNER", "ADMIN", "PATHOLOGIST"].includes(profile.data.role)
@@ -105,6 +109,56 @@ export default function ReportsPage() {
       )}
       {message && <p className="text-sm text-muted-foreground" role="status">{message}</p>}
       <section className="overflow-hidden rounded-xl border bg-card">
+        <div className="flex flex-wrap gap-3 border-b p-4">
+          <label className="sr-only" htmlFor="report-status-filter">Filter reports by status</label>
+          <select
+            className="h-10 rounded-lg border bg-background px-3 text-sm"
+            id="report-status-filter"
+            onChange={(event) => {
+              setStatusFilter(event.target.value as LabReport["status"] | "");
+              setPage(1);
+            }}
+            value={statusFilter}
+          >
+            <option value="">All report statuses</option>
+            <option value="PENDING_APPROVAL">Pending approval</option>
+            <option value="APPROVED">Approved</option>
+            <option value="DELIVERED">Delivered</option>
+          </select>
+          <label className="sr-only" htmlFor="report-search">Search reports by patient</label>
+          <input
+            className="h-10 min-w-52 rounded-lg border bg-background px-3 text-sm"
+            id="report-search"
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setPage(1);
+            }}
+            placeholder="Search patient name or code"
+            value={search}
+          />
+          <label className="sr-only" htmlFor="report-from">Reports from date</label>
+          <input
+            className="h-10 rounded-lg border bg-background px-3 text-sm"
+            id="report-from"
+            onChange={(event) => {
+              setFrom(event.target.value);
+              setPage(1);
+            }}
+            type="date"
+            value={from}
+          />
+          <label className="sr-only" htmlFor="report-to">Reports through date</label>
+          <input
+            className="h-10 rounded-lg border bg-background px-3 text-sm"
+            id="report-to"
+            onChange={(event) => {
+              setTo(event.target.value);
+              setPage(1);
+            }}
+            type="date"
+            value={to}
+          />
+        </div>
         <QueryState error={reports.error} loading={reports.isPending} onRetry={() => void reports.refetch()}>
           {!reports.data?.data.length ? (
             <p className="p-8 text-center text-sm text-muted-foreground">No reports have been generated yet.</p>
@@ -146,26 +200,19 @@ function ReportRow({
   pending: boolean;
   onApprove: () => void;
 }) {
-  const [error, setError] = useState<string | null>(null);
-  const [downloading, setDownloading] = useState(false);
-
-  async function download() {
-    setDownloading(true);
-    setError(null);
-    try {
-      const blob = await downloadReport(report.id);
+  const queryClient = useQueryClient();
+  const download = useMutation({
+    mutationFn: () => downloadReport(report.id),
+    onSuccess: (blob) => {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = `demo-report-${report.order.orderNumber}.pdf`;
       anchor.click();
-      URL.revokeObjectURL(url);
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "The report could not be downloaded.");
-    } finally {
-      setDownloading(false);
-    }
-  }
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      void queryClient.invalidateQueries({ queryKey: ["reports"] });
+    },
+  });
 
   return (
     <article className="flex flex-wrap items-start justify-between gap-4 p-5">
@@ -189,7 +236,7 @@ function ReportRow({
             ))}
           </div>
         ))}
-        {error && <p className="mt-2 text-sm text-destructive" role="alert">{error}</p>}
+        {download.error && <p className="mt-2 text-sm text-destructive" role="alert">{download.error.message}</p>}
       </div>
       <div className="flex flex-wrap gap-2">
         {canApprove && report.status === "PENDING_APPROVAL" && (
@@ -198,8 +245,8 @@ function ReportRow({
           </Button>
         )}
         {(report.status === "APPROVED" || report.status === "DELIVERED") && (
-          <Button disabled={downloading} onClick={() => void download()} size="sm" variant="outline">
-            {downloading ? "Preparing PDF…" : "Download PDF"}
+          <Button disabled={download.isPending} onClick={() => download.mutate()} size="sm" variant="outline">
+            {download.isPending ? "Preparing PDF…" : "Download PDF"}
           </Button>
         )}
       </div>

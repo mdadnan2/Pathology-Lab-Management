@@ -8,6 +8,7 @@ import {
   UseGuards,
   Res,
   ParseEnumPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ReportStatus, Role, User } from '@prisma/client';
@@ -40,11 +41,27 @@ export class ReportsController {
     @Query('page') page = '1',
     @Query('limit') limit = '10',
     @Query('status', new ParseEnumPipe(ReportStatus, { optional: true })) status?: ReportStatus,
+    @Query('search') search?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
+    const parseDate = (value: string | undefined, endOfDay: boolean): Date | undefined => {
+      if (!value) return undefined;
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`)
+        : new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        throw new BadRequestException('Report date filters must be valid ISO dates');
+      }
+      return date;
+    };
     return this.service.findAll({
       page: Math.max(1, parseInt(page, 10) || 1),
       limit: Math.min(100, Math.max(1, parseInt(limit, 10) || 10)),
       status,
+      search,
+      from: parseDate(from, false),
+      to: parseDate(to, true),
     });
   }
 
@@ -93,7 +110,7 @@ export class ReportsController {
     const pdf = await this.service.download(id, actor.id);
     response
       .setHeader('Content-Type', 'application/pdf')
-      .setHeader('Content-Disposition', `attachment; filename="demo-report-${id}.pdf"`)
+      .setHeader('Content-Disposition', 'attachment; filename="demo-report.pdf"')
       .send(pdf);
   }
 }

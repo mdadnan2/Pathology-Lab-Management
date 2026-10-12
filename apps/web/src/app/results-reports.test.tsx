@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   user: vi.fn(),
@@ -98,6 +98,8 @@ function renderPage(ui: React.ReactElement) {
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
+afterEach(cleanup);
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.user.mockResolvedValue({
@@ -128,6 +130,20 @@ describe("results and reports role workflows", () => {
     expect(screen.getByRole("button", { name: "Save draft" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve result" })).not.toBeInTheDocument();
+  });
+
+  it("saves a complete Technician result before submitting it", async () => {
+    renderPage(<ResultsPage />);
+    const valueInput = await screen.findByLabelText("Hemoglobin value");
+    await userEvent.type(valueInput, "15");
+    await userEvent.click(screen.getByRole("button", { name: "Submit for review" }));
+
+    await waitFor(() => {
+      expect(mocks.saveResultDraft).toHaveBeenCalledWith("item-1", {
+        parameters: [{ testParameterId: "parameter-1", value: "15" }],
+      });
+      expect(mocks.submitResult).toHaveBeenCalledWith("result-1");
+    });
   });
 
   it("lets a Pathologist start review for a submitted result", async () => {
@@ -200,10 +216,13 @@ describe("results and reports role workflows", () => {
     }]));
 
     renderPage(<ReportsPage />);
-    const select = await screen.findByLabelText("Approved order");
+    await screen.findByRole("option", { name: /DEMO-ORD-0002/ });
+    const select = screen.getByLabelText("Approved order");
     await userEvent.selectOptions(select, "approved-order-1");
     await userEvent.click(screen.getByRole("button", { name: "Generate report" }));
 
-    await waitFor(() => expect(mocks.generateReport).toHaveBeenCalledWith("approved-order-1"));
+    await waitFor(() => {
+      expect(mocks.generateReport.mock.calls[0]?.[0]).toBe("approved-order-1");
+    });
   });
 });

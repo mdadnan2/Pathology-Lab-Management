@@ -184,6 +184,12 @@ export interface LabReport {
   approvedBy: { firstName: string; lastName: string; role: string } | null;
 }
 
+export interface ReportEligibleOrder {
+  id: string;
+  orderNumber: string;
+  patient: Pick<Patient, "firstName" | "lastName">;
+}
+
 export async function listResults(params: {
   page?: number;
   limit?: number;
@@ -226,26 +232,30 @@ export async function listReports(params: {
   page?: number;
   limit?: number;
   status?: LabReport["status"] | "";
+  search?: string;
+  from?: string;
+  to?: string;
 } = {}): Promise<PageResult<LabReport>> {
   const query = new URLSearchParams({
     page: String(params.page ?? 1),
     limit: String(params.limit ?? 20),
   });
   if (params.status) query.set("status", params.status);
+  if (params.search?.trim()) query.set("search", params.search.trim());
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
   return apiPageRequest<LabReport>(`/reports?${query}`);
 }
 
 export async function listReportEligibleOrders(params: {
   page?: number;
   limit?: number;
-} = {}): Promise<PageResult<Pick<LabOrder, "id" | "orderNumber" | "patient">>> {
+} = {}): Promise<PageResult<ReportEligibleOrder>> {
   const query = new URLSearchParams({
     page: String(params.page ?? 1),
     limit: String(params.limit ?? 20),
   });
-  return apiPageRequest<Pick<LabOrder, "id" | "orderNumber" | "patient">>(
-    `/reports/eligible-orders?${query}`,
-  );
+  return apiPageRequest<ReportEligibleOrder>(`/reports/eligible-orders?${query}`);
 }
 
 export async function generateReport(orderId: string): Promise<LabReport> {

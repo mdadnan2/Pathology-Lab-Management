@@ -140,8 +140,12 @@ export class ResultsService {
     if (item.status === OrderItemStatus.CANCELLED) {
       throw new ConflictException('Cannot enter a result for a cancelled order item');
     }
-    if (item.result?.status === ResultStatus.APPROVED) {
-      throw new ConflictException('An approved result cannot be edited');
+    if (
+      item.result &&
+      item.result.status !== ResultStatus.DRAFT &&
+      item.result.status !== ResultStatus.REJECTED
+    ) {
+      throw new ConflictException('Only draft or rejected results can be edited');
     }
 
     const parameterIds = item.labTest.parameters.map((parameter) => parameter.id);
@@ -155,27 +159,38 @@ export class ResultsService {
 
     const saved = await this.prisma.$transaction(async (tx) => {
       const current = await tx.testResult.findUnique({ where: { orderItemId } });
-      const result = current
-        ? await tx.testResult.update({
-            where: { id: current.id },
-            data: {
-              enteredById: actorId,
-              status: ResultStatus.DRAFT,
-              reviewedById: null,
-              reviewedAt: null,
-              notes: dto.notes,
-            },
-          })
-        : await tx.testResult.create({
-            data: {
-              orderItemId,
-              enteredById: actorId,
-              status: ResultStatus.DRAFT,
-              notes: dto.notes,
-            },
-          });
+      let resultId: string;
+      if (current) {
+        const changed = await tx.testResult.updateMany({
+          where: {
+            id: current.id,
+            status: { in: [ResultStatus.DRAFT, ResultStatus.REJECTED] },
+          },
+          data: {
+            enteredById: actorId,
+            status: ResultStatus.DRAFT,
+            reviewedById: null,
+            reviewedAt: null,
+            notes: dto.notes,
+          },
+        });
+        if (changed.count !== 1) {
+          throw new ConflictException('The result changed and can no longer be edited');
+        }
+        resultId = current.id;
+      } else {
+        const created = await tx.testResult.create({
+          data: {
+            orderItemId,
+            enteredById: actorId,
+            status: ResultStatus.DRAFT,
+            notes: dto.notes,
+          },
+        });
+        resultId = created.id;
+      }
 
-      await tx.resultParameter.deleteMany({ where: { testResultId: result.id } });
+      await tx.resultParameter.deleteMany({ where: { testResultId: resultId } });
       if (dto.parameters.length > 0) {
         await tx.resultParameter.createMany({
           data: dto.parameters.map((entry) => {
@@ -185,19 +200,21 @@ export class ResultsService {
             if (!parameter) {
               throw new BadRequestException('One or more parameters do not belong to this test');
             }
-            const numericValue = Number(entry.value);
-            const isNumeric = entry.value.trim() !== '' && Number.isFinite(numericValue);
+            const normalizedValue = entry.value.trim();
+            const isNumeric = /^-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(
+              normalizedValue,
+            );
             const low = parameter.referenceRangeLow
               ? new Decimal(parameter.referenceRangeLow.toString())
               : null;
             const high = parameter.referenceRangeHigh
               ? new Decimal(parameter.referenceRangeHigh.toString())
               : null;
-            const value = isNumeric ? new Decimal(entry.value) : null;
+            const value = isNumeric ? new Decimal(normalizedValue) : null;
             return {
-              testResultId: result.id,
+              testResultId: resultId,
               testParameterId: parameter.id,
-              value: entry.value.trim(),
+              value: normalizedValue,
               unit: parameter.unit,
               isAbnormal: Boolean(
                 value && ((low && value.lessThan(low)) || (high && value.greaterThan(high))),
@@ -207,16 +224,17 @@ export class ResultsService {
         });
       }
       return tx.testResult.findUnique({
-        where: { id: result.id },
+        where: { id: resultId },
         include: RESULT_INCLUDE,
       });
     });
 
+    if (!saved) throw new NotFoundException('Saved result could not be loaded');
     await this.auditService.log({
       actorId,
       action: AuditAction.RESULT_ENTERED,
       entityType: 'TestResult',
-      entityId: saved!.id,
+      entityId: saved.id,
       metadata: { orderItemId, parameterCount: dto.parameters.length },
     });
     return saved;
@@ -228,13 +246,19 @@ export class ResultsService {
       include: {
         parameters: true,
         orderItem: {
-          include: { labTest: { include: { parameters: true } } },
+          include: {
+            order: { select: { status: true } },
+            labTest: { include: { parameters: true } },
+          },
         },
       },
     });
     if (!result) throw new NotFoundException('Result not found');
-    if (result.status !== ResultStatus.DRAFT && result.status !== ResultStatus.REJECTED) {
-      throw new ConflictException('Only draft or rejected results can be submitted');
+    if (result.status !== ResultStatus.DRAFT) {
+      throw new ConflictException('Only draft results can be submitted; rejected results must be re-entered');
+    }
+    if (!ENTRY_ORDER_STATUSES.includes(result.orderItem.order.status)) {
+      throw new ConflictException('Cannot submit a result for an order outside the processing workflow');
     }
     const expected = result.orderItem.labTest.parameters;
     if (
@@ -251,10 +275,13 @@ export class ResultsService {
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      const saved = await tx.testResult.update({
-        where: { id },
+      const changed = await tx.testResult.updateMany({
+        where: { id, status: ResultStatus.DRAFT },
         data: { status: ResultStatus.SUBMITTED, rejectionReason: null },
       });
+      if (changed.count !== 1) {
+        throw new ConflictException('The result changed and can no longer be submitted');
+      }
       await tx.labOrderItem.update({
         where: { id: result.orderItemId },
         data: { status: OrderItemStatus.RESULT_ENTERED },
@@ -266,6 +293,8 @@ export class ResultsService {
         },
         data: { status: OrderStatus.RESULT_ENTERED },
       });
+      const saved = await tx.testResult.findUnique({ where: { id } });
+      if (!saved) throw new NotFoundException('Submitted result could not be loaded');
       return saved;
     });
     await this.auditService.log({
@@ -280,9 +309,12 @@ export class ResultsService {
   async review(id: string, dto: ReviewResultDto, actorId: string) {
     const result = await this.prisma.testResult.findUnique({
       where: { id },
-      include: { orderItem: true },
+      include: { orderItem: { include: { order: { select: { status: true } } } } },
     });
     if (!result) throw new NotFoundException('Result not found');
+    if (result.orderItem.order.status === OrderStatus.CANCELLED) {
+      throw new ConflictException('Cannot review a result for a cancelled order');
+    }
     if (
       result.status !== ResultStatus.SUBMITTED &&
       result.status !== ResultStatus.UNDER_REVIEW
@@ -291,6 +323,12 @@ export class ResultsService {
     }
     if (!['UNDER_REVIEW', 'APPROVED', 'REJECTED'].includes(dto.status)) {
       throw new BadRequestException('Invalid result review status');
+    }
+    if (
+      dto.status === ResultStatus.UNDER_REVIEW &&
+      result.status !== ResultStatus.SUBMITTED
+    ) {
+      throw new ConflictException('Only submitted results can enter review');
     }
     if (dto.status === ResultStatus.REJECTED && !dto.rejectionReason?.trim()) {
       throw new BadRequestException('A rejection reason is required');
@@ -307,15 +345,25 @@ export class ResultsService {
       throw new ConflictException('Move the result under review before approving or rejecting it');
     }
     const updated = await this.prisma.$transaction(async (tx) => {
-      const saved = await tx.testResult.update({
-        where: { id },
+      const changed = await tx.testResult.updateMany({
+        where: {
+          id,
+          status: nextStatus === ResultStatus.UNDER_REVIEW
+            ? ResultStatus.SUBMITTED
+            : ResultStatus.UNDER_REVIEW,
+        },
         data: {
           status: nextStatus,
           reviewedById: actorId,
           reviewedAt: new Date(),
-          rejectionReason: nextStatus === ResultStatus.REJECTED ? dto.rejectionReason!.trim() : null,
+          rejectionReason: nextStatus === ResultStatus.REJECTED
+            ? dto.rejectionReason?.trim() ?? null
+            : null,
         },
       });
+      if (changed.count !== 1) {
+        throw new ConflictException('The result changed and can no longer be reviewed');
+      }
       if (nextStatus === ResultStatus.APPROVED) {
         await tx.labOrderItem.update({
           where: { id: result.orderItemId },
@@ -340,6 +388,8 @@ export class ResultsService {
           data: { status: OrderStatus.UNDER_REVIEW },
         });
       }
+      const saved = await tx.testResult.findUnique({ where: { id } });
+      if (!saved) throw new NotFoundException('Reviewed result could not be loaded');
       return saved;
     });
 
@@ -351,9 +401,6 @@ export class ResultsService {
           : AuditAction.RESULT_REJECTED,
         entityType: 'TestResult',
         entityId: id,
-        ...(nextStatus === ResultStatus.REJECTED
-          ? { metadata: { reason: dto.rejectionReason!.trim() } }
-          : {}),
       });
     }
     return updated;
