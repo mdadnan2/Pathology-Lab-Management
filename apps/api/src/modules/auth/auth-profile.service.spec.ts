@@ -8,6 +8,7 @@ describe('AuthService login and profile', () => {
   const prisma = { user: { findUnique: jest.fn() } };
   const jwtService = { sign: jest.fn() };
   const auditService = { log: jest.fn() };
+  const permissionsService = { getPermissions: jest.fn().mockResolvedValue([]) };
   let service: AuthService;
 
   beforeEach(() => {
@@ -18,6 +19,7 @@ describe('AuthService login and profile', () => {
       prisma as unknown as PrismaService,
       jwtService as never,
       auditService as unknown as AuditService,
+      permissionsService as never,
     );
   });
 

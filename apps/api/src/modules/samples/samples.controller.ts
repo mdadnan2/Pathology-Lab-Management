@@ -8,29 +8,43 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { PasswordChangeGuard } from '../../common/guards/password-change.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { PermissionsGuard } from '../../common/permissions/permissions.guard';
+import { RequirePermissions } from '../../common/permissions/permissions.decorator';
+import { PERMISSIONS } from '../../common/permissions/permission-policy';
 
 @ApiTags('samples')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, PasswordChangeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard, PasswordChangeGuard)
 @Controller('samples')
 export class SamplesController {
   constructor(private service: SamplesService) {}
 
   @Get()
+  @RequirePermissions(PERMISSIONS.SAMPLES_VIEW)
   @ApiOperation({ summary: 'List samples' })
   findAll(
+    @CurrentUser() actor: User,
     @Query('page') page = '1',
     @Query('limit') limit = '5',
     @Query('status') status?: SampleStatus,
   ) {
-    return this.service.findAll({ page: parseInt(page, 10), limit: Math.min(parseInt(limit, 10), 100), status });
+    return this.service.findAll({
+      page: parseInt(page, 10),
+      limit: Math.min(parseInt(limit, 10), 100),
+      status,
+      role: actor.role,
+    });
   }
 
   @Get(':id')
+  @RequirePermissions(PERMISSIONS.SAMPLES_VIEW)
   @ApiOperation({ summary: 'Get sample detail' })
-  findOne(@Param('id') id: string) { return this.service.findOne(id); }
+  findOne(@Param('id') id: string, @CurrentUser() actor: User) {
+    return this.service.findOne(id, actor.role);
+  }
 
   @Patch(':id/status')
+  @RequirePermissions(PERMISSIONS.SAMPLES_UPDATE_STATUS)
   @Roles(Role.OWNER, Role.ADMIN, Role.TECHNICIAN)
   @ApiOperation({ summary: 'Update sample status' })
   updateStatus(@Param('id') id: string, @Body() dto: UpdateSampleStatusDto, @CurrentUser() actor: User) {

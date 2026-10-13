@@ -8,6 +8,7 @@ import {
   AuditAction,
   OrderStatus,
   ReportStatus,
+  Role,
   ResultStatus,
 } from '@prisma/client';
 import Decimal from 'decimal.js';
@@ -16,9 +17,12 @@ import Decimal from 'decimal.js';
 import PDFDocument = require('pdfkit');
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { PermissionsService } from '../../common/permissions/permissions.service';
+import { PERMISSIONS } from '../../common/permissions/permission-policy';
 
 const REPORT_INCLUDE = {
   approvedBy: { select: { firstName: true, lastName: true, role: true } },
+  generatedBy: { select: { id: true } },
   order: {
     include: {
       patient: {
@@ -51,6 +55,7 @@ export class ReportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly permissionsService: PermissionsService,
   ) {}
 
   async findAll(params: {
@@ -60,10 +65,18 @@ export class ReportsService {
     search?: string;
     from?: Date;
     to?: Date;
+    role: Role;
   }) {
     const search = params.search?.trim();
     const where = {
-      ...(params.status ? { status: params.status } : {}),
+      ...(params.role === Role.RECEPTIONIST
+        ? {
+            AND: [
+              { status: { in: [ReportStatus.APPROVED, ReportStatus.DELIVERED] } },
+              ...(params.status ? [{ status: params.status }] : []),
+            ],
+          }
+        : params.status ? { status: params.status } : {}),
       ...(params.from || params.to
         ? {
             createdAt: {
@@ -107,12 +120,19 @@ export class ReportsService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, role?: Role) {
     const report = await this.prisma.labReport.findUnique({
       where: { id },
       include: REPORT_INCLUDE,
     });
     if (!report) throw new NotFoundException('Report not found');
+    if (
+      role === Role.RECEPTIONIST &&
+      report.status !== ReportStatus.APPROVED &&
+      report.status !== ReportStatus.DELIVERED
+    ) {
+      throw new NotFoundException('Report not found');
+    }
     return report;
   }
 
@@ -151,6 +171,7 @@ export class ReportsService {
   }
 
   async generate(orderId: string, actorId: string) {
+    await this.permissionsService.assertUserPermission(actorId, PERMISSIONS.REPORTS_GENERATE);
     const order = await this.prisma.labOrder.findUnique({
       where: { id: orderId },
       include: {
@@ -175,6 +196,7 @@ export class ReportsService {
         data: {
           orderId,
           generatedAt: new Date(),
+          generatedById: actorId,
           status: ReportStatus.PENDING_APPROVAL,
         },
         include: REPORT_INCLUDE,
@@ -199,6 +221,7 @@ export class ReportsService {
   }
 
   async approve(id: string, actorId: string) {
+    await this.permissionsService.assertUserPermission(actorId, PERMISSIONS.REPORTS_APPROVE);
     const report = await this.prisma.labReport.findUnique({
       where: { id },
       include: { order: { select: { status: true } } },
@@ -209,6 +232,9 @@ export class ReportsService {
     }
     if (report.order.status === OrderStatus.CANCELLED) {
       throw new ConflictException('Cannot approve a report for a cancelled order');
+    }
+    if (report.generatedById === actorId) {
+      throw new ConflictException('You cannot approve a report you generated');
     }
     const updated = await this.prisma.$transaction(async (tx) => {
       const changed = await tx.labReport.updateMany({
@@ -247,6 +273,7 @@ export class ReportsService {
   }
 
   async download(id: string, actorId: string): Promise<Buffer> {
+    await this.permissionsService.assertUserPermission(actorId, PERMISSIONS.REPORTS_DOWNLOAD);
     const report = await this.findOne(id);
     if (report.status !== ReportStatus.APPROVED && report.status !== ReportStatus.DELIVERED) {
       throw new BadRequestException('Only approved reports can be downloaded');

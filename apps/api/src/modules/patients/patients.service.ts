@@ -4,7 +4,7 @@ import {
   NotFoundException,
   Logger,
 } from '@nestjs/common';
-import { AuditAction } from '@prisma/client';
+import { AuditAction, OrderStatus, ResultStatus, Role } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CreatePatientDto, UpdatePatientDto } from './dto/patient.dto';
@@ -15,6 +15,10 @@ function startOfUtcDay(date: Date): Date {
   return new Date(
     Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
   );
+}
+
+function isLaboratoryRole(role: Role): boolean {
+  return role === Role.TECHNICIAN || role === Role.PATHOLOGIST;
 }
 
 @Injectable()
@@ -92,17 +96,45 @@ export class PatientsService {
     };
   }
 
-  async findAll(params: { page: number; limit: number; search?: string }) {
-    const { page, limit, search } = params;
+  private patientWorkScope(role: Role) {
+    if (role === Role.TECHNICIAN) {
+      return {
+        orders: {
+          some: {
+            status: { in: [OrderStatus.SAMPLE_COLLECTED, OrderStatus.PROCESSING, OrderStatus.RESULT_ENTERED] },
+          },
+        },
+      };
+    }
+    if (role === Role.PATHOLOGIST) {
+      return {
+        orders: {
+          some: {
+            items: {
+              some: {
+                result: { is: { status: { in: [ResultStatus.SUBMITTED, ResultStatus.UNDER_REVIEW] } } },
+              },
+            },
+          },
+        },
+      };
+    }
+    return {};
+  }
+
+  async findAll(params: { page: number; limit: number; search?: string; role: Role }) {
+    const { page, limit, search, role } = params;
     const skip = (page - 1) * limit;
+    const labRole = isLaboratoryRole(role);
 
     const where = {
       isActive: true,
+      ...this.patientWorkScope(role),
       ...(search && {
         OR: [
           { firstName: { contains: search, mode: 'insensitive' as const } },
           { lastName: { contains: search, mode: 'insensitive' as const } },
-          { phone: { contains: search } },
+          ...(!labRole ? [{ phone: { contains: search } }] : []),
           { patientCode: { contains: search, mode: 'insensitive' as const } },
         ],
       }),
@@ -111,6 +143,18 @@ export class PatientsService {
     const [patients, total] = await Promise.all([
       this.prisma.patient.findMany({
         where, skip, take: limit, orderBy: { createdAt: 'desc' },
+        ...(labRole
+          ? {
+              select: {
+                id: true,
+                patientCode: true,
+                firstName: true,
+                lastName: true,
+                dateOfBirth: true,
+                gender: true,
+              },
+            }
+          : {}),
       }),
       this.prisma.patient.count({ where }),
     ]);
@@ -118,8 +162,22 @@ export class PatientsService {
     return { data: patients, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   }
 
-  async findOne(id: string) {
-    const patient = await this.prisma.patient.findUnique({ where: { id } });
+  async findOne(id: string, role: Role) {
+    const patient = await this.prisma.patient.findFirst({
+      where: { id, isActive: true, ...this.patientWorkScope(role) },
+      ...(isLaboratoryRole(role)
+        ? {
+            select: {
+              id: true,
+              patientCode: true,
+              firstName: true,
+              lastName: true,
+              dateOfBirth: true,
+              gender: true,
+            },
+          }
+        : {}),
+    });
     if (!patient) throw new NotFoundException('Patient not found');
     return patient;
   }
@@ -149,16 +207,34 @@ export class PatientsService {
     return updated;
   }
 
-  async getOrderHistory(patientId: string) {
-    const patient = await this.prisma.patient.findUnique({ where: { id: patientId } });
+  async getOrderHistory(patientId: string, role: Role) {
+    const patient = await this.prisma.patient.findFirst({
+      where: { id: patientId, isActive: true, ...this.patientWorkScope(role) },
+      select: { id: true },
+    });
     if (!patient) throw new NotFoundException('Patient not found');
 
     return this.prisma.labOrder.findMany({
-      where: { patientId },
+      where: {
+        patientId,
+        ...(role === Role.TECHNICIAN
+          ? { status: { in: [OrderStatus.SAMPLE_COLLECTED, OrderStatus.PROCESSING, OrderStatus.RESULT_ENTERED] } }
+          : role === Role.PATHOLOGIST
+            ? {
+                items: {
+                  some: {
+                    result: { is: { status: { in: [ResultStatus.SUBMITTED, ResultStatus.UNDER_REVIEW] } } },
+                  },
+                },
+              }
+            : {}),
+      },
       orderBy: { createdAt: 'desc' },
       include: {
         items: { include: { labTest: { select: { name: true, code: true } } } },
-        invoice: { select: { invoiceNumber: true, totalAmount: true, paidAmount: true, status: true } },
+        invoice: role === Role.TECHNICIAN || role === Role.PATHOLOGIST
+          ? false
+          : { select: { invoiceNumber: true, totalAmount: true, paidAmount: true, status: true } },
         samples: { select: { sampleId: true, status: true } },
       },
     });

@@ -8,7 +8,9 @@ applyTo: "apps/api/src/modules/results/**,apps/api/src/modules/reports/**,apps/w
 
 - `TestResult` fields: `labOrderItemId`, `enteredById`, `enteredAt`, `status`, `notes`
 - `ResultParameter` fields: `testResultId`, `testParameterId`, `value`, `unit`, `isAbnormal`
-- Only TECHNICIAN, ADMIN, OWNER can enter results
+- TECHNICIAN can enter and submit results by default. OWNER and ADMIN do not receive
+  clinical permissions by role; an OWNER may explicitly grant clinical permissions to
+  an individual staff account with a reason.
 - `isAbnormal` is set server-side by comparing `value` against `referenceRangeLow/High`
 - Reference range flags are informational demo indicators only — not clinical diagnosis
 - Results can be saved as `DRAFT` before submission for review
@@ -20,7 +22,8 @@ DRAFT → SUBMITTED → UNDER_REVIEW → APPROVED
                   ↘ REJECTED (with reason) → DRAFT (re-entry)
 ```
 
-- Only PATHOLOGIST, ADMIN, OWNER can move status to `UNDER_REVIEW`, `APPROVED`, or `REJECTED`
+- PATHOLOGIST can review, approve, and reject results by default. Other roles require
+  explicitly granted individual clinical permissions.
 - A result cannot be edited after `APPROVED`
 - Rejection requires a reason; technician can re-enter and resubmit
 
@@ -28,6 +31,8 @@ DRAFT → SUBMITTED → UNDER_REVIEW → APPROVED
 
 - `LabReport` fields: `orderId`, `approvedById`, `approvedAt`, `generatedAt`, `pdfPath`, `status`
 - Report can only be generated after all `LabOrderItem` results are `APPROVED`
+- A report generator cannot approve the same report. The generator identity is stored on
+  newly created reports; existing reports without generator identity are grandfathered.
 - Report status: `DRAFT | PENDING_APPROVAL | APPROVED | DELIVERED`
 - PDF is generated server-side using a template (no user-supplied HTML)
 - PDF contains: lab identity (fictional demo), patient details, order number, test results, reference ranges, approval details, timestamps
@@ -40,6 +45,8 @@ DRAFT → SUBMITTED → UNDER_REVIEW → APPROVED
 - No user-provided HTML or Markdown is rendered into the PDF
 - PDF stored in `apps/api/uploads/reports/` or returned as a stream
 - Access to PDF requires authentication and authorization check
+- RECEPTIONIST can access finalized reports only; accessing/downloading a finalized report
+  marks it delivered.
 
 ## Report access
 

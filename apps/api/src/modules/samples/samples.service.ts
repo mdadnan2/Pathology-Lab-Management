@@ -4,10 +4,12 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { AuditAction, OrderItemStatus, SampleStatus, OrderStatus } from '@prisma/client';
+import { AuditAction, OrderItemStatus, SampleStatus, OrderStatus, ResultStatus, Role } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { UpdateSampleStatusDto } from './dto/sample.dto';
+import { PermissionsService } from '../../common/permissions/permissions.service';
+import { PERMISSIONS } from '../../common/permissions/permission-policy';
 
 const VALID_TRANSITIONS: Record<SampleStatus, SampleStatus[]> = {
   PENDING: [SampleStatus.COLLECTED, SampleStatus.REJECTED],
@@ -50,12 +52,43 @@ const ELIGIBLE_ITEM_STATUSES: Partial<Record<SampleStatus, OrderItemStatus[]>> =
 
 @Injectable()
 export class SamplesService {
-  constructor(private prisma: PrismaService, private auditService: AuditService) {}
+  constructor(
+    private prisma: PrismaService,
+    private auditService: AuditService,
+    private permissionsService: PermissionsService,
+  ) {}
 
-  async findAll(params: { page: number; limit: number; status?: SampleStatus }) {
-    const { page, limit, status } = params;
+  async findAll(params: { page: number; limit: number; status?: SampleStatus; role: Role }) {
+    const { page, limit, status, role } = params;
     const skip = (page - 1) * limit;
-    const where = { ...(status && { status }) };
+    const workScope = role === Role.TECHNICIAN
+      ? {
+          order: {
+            status: {
+              in: [
+                OrderStatus.SAMPLE_COLLECTED,
+                OrderStatus.PROCESSING,
+                OrderStatus.RESULT_ENTERED,
+              ],
+            },
+          },
+        }
+      : role === Role.PATHOLOGIST
+        ? {
+            order: {
+              items: {
+                some: {
+                  result: {
+                    is: {
+                      status: { in: [ResultStatus.SUBMITTED, ResultStatus.UNDER_REVIEW] },
+                    },
+                  },
+                },
+              },
+            },
+          }
+        : {};
+    const where = { ...(status && { status }), ...workScope };
 
     const [samples, total] = await Promise.all([
       this.prisma.sample.findMany({
@@ -76,9 +109,36 @@ export class SamplesService {
     return { data: samples, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   }
 
-  async findOne(id: string) {
-    const sample = await this.prisma.sample.findUnique({
-      where: { id },
+  async findOne(id: string, role: Role) {
+    const workScope = role === Role.TECHNICIAN
+      ? {
+          order: {
+            status: {
+              in: [
+                OrderStatus.SAMPLE_COLLECTED,
+                OrderStatus.PROCESSING,
+                OrderStatus.RESULT_ENTERED,
+              ],
+            },
+          },
+        }
+      : role === Role.PATHOLOGIST
+        ? {
+            order: {
+              items: {
+                some: {
+                  result: {
+                    is: {
+                      status: { in: [ResultStatus.SUBMITTED, ResultStatus.UNDER_REVIEW] },
+                    },
+                  },
+                },
+              },
+            },
+          }
+        : {};
+    const sample = await this.prisma.sample.findFirst({
+      where: { id, ...workScope },
       include: {
         order: { include: { patient: true, items: { include: { labTest: true } } } },
         collectedBy: { select: { firstName: true, lastName: true } },
@@ -89,6 +149,7 @@ export class SamplesService {
   }
 
   async updateStatus(id: string, dto: UpdateSampleStatusDto, actorId: string) {
+    await this.permissionsService.assertUserPermission(actorId, PERMISSIONS.SAMPLES_UPDATE_STATUS);
     const sample = await this.prisma.sample.findUnique({
       where: { id },
       include: { order: { select: { status: true } } },

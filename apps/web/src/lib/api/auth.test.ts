@@ -26,6 +26,7 @@ describe("getCurrentUser", () => {
       email: "owner@example.test",
       role: "OWNER",
       mustChangePassword: false,
+      permissions: [],
     };
     apiRequest.mockResolvedValue({ data: user });
 
@@ -41,6 +42,7 @@ describe("getCurrentUser", () => {
       email: "admin@example.test",
       role: "ADMIN",
       mustChangePassword: false,
+      permissions: [],
     };
     apiRequest.mockResolvedValue({ data: { data: user } });
 

@@ -1,11 +1,14 @@
 import {
-  Injectable, NotFoundException, BadRequestException, ForbiddenException,
+  Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException,
 } from '@nestjs/common';
 import { AuditAction, InvoiceStatus, Role } from '@prisma/client';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { RecordPaymentDto, ApplyDiscountDto, CancelInvoiceDto } from './dto/billing.dto';
+import { ReversePaymentDto } from './dto/billing.dto';
+import { PermissionsService } from '../../common/permissions/permissions.service';
+import { PERMISSIONS } from '../../common/permissions/permission-policy';
 
 const INVOICE_INCLUDE = {
   patient: { select: { id: true, patientCode: true, firstName: true, lastName: true, phone: true } },
@@ -24,7 +27,11 @@ const INVOICE_INCLUDE = {
 
 @Injectable()
 export class BillingService {
-  constructor(private prisma: PrismaService, private auditService: AuditService) {}
+  constructor(
+    private prisma: PrismaService,
+    private auditService: AuditService,
+    private permissionsService: PermissionsService,
+  ) {}
 
   async findAll(params: {
     page: number; limit: number;
@@ -69,6 +76,7 @@ export class BillingService {
   }
 
   async recordPayment(id: string, dto: RecordPaymentDto, actorId: string) {
+    await this.permissionsService.assertUserPermission(actorId, PERMISSIONS.PAYMENTS_RECORD);
     const invoice = await this.prisma.invoice.findUnique({ where: { id } });
     if (!invoice) throw new NotFoundException('Invoice not found');
     if (invoice.status === InvoiceStatus.CANCELLED) throw new BadRequestException('Cannot record payment on a cancelled invoice');
@@ -85,6 +93,18 @@ export class BillingService {
       : InvoiceStatus.PARTIALLY_PAID;
 
     const payment = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.invoice.updateMany({
+        where: {
+          id,
+          status: invoice.status,
+          paidAmount: invoice.paidAmount,
+          totalAmount: invoice.totalAmount,
+        },
+        data: { paidAmount: newPaidAmount.toFixed(2), status: newStatus },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException('Invoice changed while recording the payment; retry');
+      }
       const created = await tx.payment.create({
         data: {
           invoiceId: id,
@@ -94,10 +114,6 @@ export class BillingService {
           notes: dto.notes,
           recordedById: actorId,
         },
-      });
-      await tx.invoice.update({
-        where: { id },
-        data: { paidAmount: newPaidAmount.toFixed(2), status: newStatus },
       });
       return created;
     });
@@ -112,6 +128,11 @@ export class BillingService {
   }
 
   async applyDiscount(id: string, dto: ApplyDiscountDto, actorId: string, actorRole: Role) {
+    await this.permissionsService.assertUserPermission(actorId, PERMISSIONS.BILLING_APPLY_DISCOUNT);
+    if (typeof dto.reason !== 'string' || dto.reason.trim().length < 5) {
+      throw new BadRequestException('A discount reason of at least 5 characters is required');
+    }
+    const reason = dto.reason.trim();
     if (actorRole !== Role.OWNER && actorRole !== Role.ADMIN) {
       throw new ForbiddenException('Only OWNER or ADMIN can apply discounts');
     }
@@ -136,21 +157,31 @@ export class BillingService {
       : paidAmount.gt(0) ? InvoiceStatus.PARTIALLY_PAID : InvoiceStatus.UNPAID;
 
     await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.invoice.updateMany({
+        where: {
+          id,
+          status: invoice.status,
+          paidAmount: invoice.paidAmount,
+          subtotal: invoice.subtotal,
+          discountAmount: invoice.discountAmount,
+          totalAmount: invoice.totalAmount,
+        },
+        data: {
+          discountAmount: totalDiscount.toFixed(2),
+          totalAmount: newTotal.toFixed(2),
+          status: newStatus,
+        },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException('Invoice changed while applying the discount; retry');
+      }
       await tx.financialAdjustment.create({
         data: {
           invoiceId: id,
           type: 'DISCOUNT',
           amount: discountAmount.toFixed(2),
-          reason: dto.reason,
+          reason,
           authorizedById: actorId,
-        },
-      });
-      await tx.invoice.update({
-        where: { id },
-        data: {
-          discountAmount: totalDiscount.toFixed(2),
-          totalAmount: newTotal.toFixed(2),
-          status: newStatus,
         },
       });
     });
@@ -158,13 +189,18 @@ export class BillingService {
     await this.auditService.log({
       actorId, action: AuditAction.DISCOUNT_APPLIED,
       entityType: 'Invoice', entityId: id,
-      metadata: { amount: discountAmount.toFixed(2), reason: dto.reason },
+      metadata: { amount: discountAmount.toFixed(2), reason },
     });
 
     return this.findOne(id);
   }
 
   async cancelInvoice(id: string, dto: CancelInvoiceDto, actorId: string, actorRole: Role) {
+    await this.permissionsService.assertUserPermission(actorId, PERMISSIONS.INVOICES_CANCEL);
+    if (typeof dto.reason !== 'string' || dto.reason.trim().length < 5) {
+      throw new BadRequestException('A cancellation reason of at least 5 characters is required');
+    }
+    const reason = dto.reason.trim();
     if (actorRole !== Role.OWNER && actorRole !== Role.ADMIN) {
       throw new ForbiddenException('Only OWNER or ADMIN can cancel invoices');
     }
@@ -178,31 +214,45 @@ export class BillingService {
     if (paidAmount.gt(0)) throw new BadRequestException('Reverse all payments before cancelling this invoice');
 
     await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.invoice.updateMany({
+        where: { id, status: invoice.status, paidAmount: invoice.paidAmount },
+        data: { status: InvoiceStatus.CANCELLED, cancelledAt: new Date() },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException('Invoice changed while cancelling; retry');
+      }
       await tx.financialAdjustment.create({
         data: {
           invoiceId: id,
           type: 'CANCELLATION',
           amount: invoice.totalAmount,
-          reason: dto.reason,
+          reason,
           authorizedById: actorId,
         },
-      });
-      await tx.invoice.update({
-        where: { id },
-        data: { status: InvoiceStatus.CANCELLED, cancelledAt: new Date() },
       });
     });
 
     await this.auditService.log({
       actorId, action: AuditAction.INVOICE_CANCELLED,
       entityType: 'Invoice', entityId: id,
-      metadata: { reason: dto.reason },
+      metadata: { reason },
     });
 
     return this.findOne(id);
   }
 
-  async reversePayment(invoiceId: string, paymentId: string, actorId: string, actorRole: Role) {
+  async reversePayment(
+    invoiceId: string,
+    paymentId: string,
+    dto: ReversePaymentDto,
+    actorId: string,
+    actorRole: Role,
+  ) {
+    await this.permissionsService.assertUserPermission(actorId, PERMISSIONS.PAYMENTS_REVERSE);
+    if (typeof dto.reason !== 'string' || dto.reason.trim().length < 5) {
+      throw new BadRequestException('A reversal reason of at least 5 characters is required');
+    }
+    const reason = dto.reason.trim();
     if (actorRole !== Role.OWNER && actorRole !== Role.ADMIN) {
       throw new ForbiddenException('Only OWNER or ADMIN can reverse payments');
     }
@@ -214,35 +264,56 @@ export class BillingService {
     const invoice = await this.prisma.invoice.findUnique({ where: { id: invoiceId } });
     if (!invoice) throw new NotFoundException('Invoice not found');
 
-    const newPaidAmount = new Decimal(invoice.paidAmount.toString()).minus(payment.amount.toString());
-    const newStatus = newPaidAmount.lte(0)
-      ? InvoiceStatus.UNPAID
-      : InvoiceStatus.PARTIALLY_PAID;
-
     await this.prisma.$transaction(async (tx) => {
-      await tx.payment.update({
-        where: { id: paymentId },
+      const reversed = await tx.payment.updateMany({
+        where: { id: paymentId, invoiceId, isReversed: false },
         data: { isReversed: true, reversedAt: new Date() },
       });
+      if (reversed.count !== 1) {
+        throw new ConflictException('Payment was already reversed; refresh and retry');
+      }
+      const currentInvoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
+      if (!currentInvoice) throw new NotFoundException('Invoice not found');
+      const currentPaidAmount = new Decimal(currentInvoice.paidAmount.toString());
+      const currentNewPaidAmount = currentPaidAmount.minus(payment.amount.toString());
+      if (currentNewPaidAmount.lt(0)) {
+        throw new ConflictException('Invoice balance is inconsistent with its payments');
+      }
+      const currentNewStatus = currentNewPaidAmount.lte(0)
+        ? InvoiceStatus.UNPAID
+        : currentNewPaidAmount.gte(currentInvoice.totalAmount.toString())
+          ? InvoiceStatus.PAID
+          : InvoiceStatus.PARTIALLY_PAID;
+      const updated = await tx.invoice.updateMany({
+        where: {
+          id: invoiceId,
+          status: currentInvoice.status,
+          paidAmount: currentInvoice.paidAmount,
+          totalAmount: currentInvoice.totalAmount,
+        },
+        data: {
+          paidAmount: currentNewPaidAmount.toFixed(2),
+          status: currentNewStatus,
+        },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException('Invoice changed while reversing the payment; retry');
+      }
       await tx.financialAdjustment.create({
         data: {
           invoiceId,
           type: 'REVERSAL',
           amount: payment.amount,
-          reason: `Reversal of payment ${paymentId}`,
+          reason,
           authorizedById: actorId,
         },
-      });
-      await tx.invoice.update({
-        where: { id: invoiceId },
-        data: { paidAmount: newPaidAmount.toFixed(2), status: newStatus },
       });
     });
 
     await this.auditService.log({
       actorId, action: AuditAction.PAYMENT_REVERSED,
       entityType: 'Invoice', entityId: invoiceId,
-      metadata: { paymentId, amount: payment.amount.toString() },
+      metadata: { paymentId, amount: payment.amount.toString(), reason },
     });
 
     return this.findOne(invoiceId);

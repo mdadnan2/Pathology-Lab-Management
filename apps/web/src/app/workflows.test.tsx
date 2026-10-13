@@ -11,6 +11,15 @@ const mocks = vi.hoisted(() => ({
     email: "owner@example.test",
     role: "OWNER",
     mustChangePassword: false,
+    permissions: [
+      "patients.view", "patients.create", "patients.update",
+      "orders.view", "orders.create", "orders.cancel",
+      "samples.view", "samples.update_status",
+      "catalogue.view", "catalogue.manage",
+      "billing.view", "payments.record", "billing.apply_discount",
+      "payments.reverse", "invoices.cancel", "staff.manage",
+      "dashboard.view", "audit.view", "settings.manage",
+    ],
   },
   currentUserQuery: vi.fn(),
   apiRequest: vi.fn(),
@@ -26,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   replace: vi.fn(),
   refresh: vi.fn(),
   useParams: vi.fn(),
+  pathname: "/dashboard",
 }));
 
 vi.mock("@/lib/api/client", () => {
@@ -61,6 +71,7 @@ vi.mock("@/lib/api/laboratory", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mocks.replace, refresh: mocks.refresh, back: vi.fn() }),
   useParams: mocks.useParams,
+  usePathname: () => mocks.pathname,
 }));
 
 import { DashboardShell } from "@/components/layout/dashboard-shell";
@@ -182,6 +193,7 @@ beforeEach(() => {
   mocks.getOrder.mockResolvedValue(order);
   mocks.listSamples.mockResolvedValue(paginated([]));
   mocks.useParams.mockReturnValue({ id: order.id });
+  mocks.pathname = "/dashboard";
 });
 
 afterEach(() => cleanup());
@@ -253,6 +265,43 @@ describe("authentication and dashboard screens", () => {
     expect((await screen.findAllByRole("navigation", { name: "Main navigation" })).length).toBe(2);
     expect(screen.getAllByRole("link", { name: /Staff & roles/ }).length).toBeGreaterThan(0);
     expect(screen.getByText("Protected page")).toBeInTheDocument();
+  });
+
+  it("shows the same permission-filtered links on mobile and desktop", async () => {
+    mocks.currentUserQuery.mockResolvedValue({
+      ...owner,
+      role: "RECEPTIONIST",
+      permissions: [
+        "patients.view", "patients.create", "patients.update",
+        "orders.view", "orders.create", "samples.view", "catalogue.view",
+        "reports.view", "reports.download", "billing.view", "payments.record",
+      ],
+    });
+    renderWithQuery(<DashboardShell><p>Protected page</p></DashboardShell>);
+
+    expect((await screen.findAllByRole("link", { name: "Reports" })).length).toBe(2);
+    expect(screen.getAllByRole("link", { name: "Billing" })).toHaveLength(2);
+    expect(screen.queryByRole("link", { name: /Staff & roles/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Results" })).not.toBeInTheDocument();
+  });
+
+  it("keeps navigation sticky and highlights the active section", async () => {
+    mocks.pathname = "/staff";
+    renderWithQuery(<DashboardShell><p>Staff page</p></DashboardShell>);
+
+    const staffLinks = await screen.findAllByRole("link", { name: /Staff & roles/ });
+    expect(staffLinks).toHaveLength(2);
+    for (const link of staffLinks) {
+      expect(link).toHaveAttribute("aria-current", "page");
+      expect(link).toHaveClass("bg-muted");
+    }
+    expect(screen.getAllByRole("link", { name: "Overview" }).every(
+      (link) => !link.hasAttribute("aria-current"),
+    )).toBe(true);
+    expect(document.querySelector("header")).toHaveClass("sticky");
+    expect(screen.getAllByRole("navigation", { name: "Main navigation" })[0]).toHaveClass("sticky");
+    expect(document.querySelector("aside")).toHaveClass("sticky");
+    expect(document.documentElement).toHaveClass("dashboard-scrollbars");
   });
 
   it("asks for confirmation before signing out", async () => {

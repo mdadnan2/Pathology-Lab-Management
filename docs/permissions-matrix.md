@@ -2,6 +2,12 @@
 
 ✓ = Allowed | ✗ = Denied | ✓* = Allowed with restrictions
 
+This table documents role defaults from `apps/api/src/common/permissions/permission-policy.ts`.
+An explicit clinical permission recorded for one staff account can add capabilities, except
+that default role permissions cannot be revoked through the exception workflow. Only an
+OWNER can grant or revoke clinical exceptions. The frontend follows effective permissions;
+the API remains authoritative.
+
 ## User and role management
 
 | Operation                          | OWNER | ADMIN | RECEPTIONIST | TECHNICIAN | PATHOLOGIST |
@@ -50,19 +56,19 @@ random temporary password that must be changed at next sign-in.
 
 | Operation                          | OWNER | ADMIN | RECEPTIONIST | TECHNICIAN | PATHOLOGIST |
 |------------------------------------|-------|-------|--------------|------------|-------------|
-| Enter / update draft result        | ✓     | ✓     | ✗            | ✓          | ✗           |
-| Submit result for review           | ✓     | ✓     | ✗            | ✓          | ✗           |
-| Approve result                     | ✓     | ✓     | ✗            | ✗          | ✓           |
-| Reject result                      | ✓     | ✓     | ✗            | ✗          | ✓           |
-| View results                       | ✓     | ✓     | ✗            | ✓          | ✓           |
+| Enter / update draft result        | ✗     | ✗     | ✗            | ✓          | ✗           |
+| Submit result for review           | ✗     | ✗     | ✗            | ✓          | ✗           |
+| Approve result                     | ✗     | ✗     | ✗            | ✗          | ✓           |
+| Reject result                      | ✗     | ✗     | ✗            | ✗          | ✓           |
+| View results                       | ✗     | ✗     | ✗            | ✓          | ✓           |
 
 ## Reports
 
 | Operation                          | OWNER | ADMIN | RECEPTIONIST | TECHNICIAN | PATHOLOGIST |
 |------------------------------------|-------|-------|--------------|------------|-------------|
-| Generate report                    | ✓     | ✓     | ✗            | ✗          | ✓           |
-| Approve / finalize report          | ✓     | ✓     | ✗            | ✗          | ✓           |
-| View / download report             | ✓     | ✓     | ✓            | ✗          | ✓           |
+| Generate report                    | ✗     | ✗     | ✗            | ✗          | ✓           |
+| Approve / finalize report          | ✗     | ✗     | ✗            | ✗          | ✓           |
+| View / download finalized report   | ✗     | ✗     | ✓*           | ✗          | ✓           |
 
 ## Billing and payments
 
@@ -92,3 +98,18 @@ random temporary password that must be changed at next sign-in.
   authorizes using that server-side role, never a request-body value.
 - Hiding a navigation item is a UX convenience, not a security control.
 - ADMIN restrictions on OWNER accounts are enforced in the `UsersService`, not just the guard.
+- Clinical access is not implied by OWNER or ADMIN. An OWNER grants an exception to another
+  active user with a mandatory reason; each grant and revoke creates an append-only
+  permission event and an audit event. Self-grants/revokes and revocation of role defaults
+  are prohibited.
+- A result approver cannot approve their own entered result, and a report generator cannot
+  approve that report. Legacy reports with no generator identity are grandfathered.
+- RECEPTIONIST can read and download finalized reports only. Download marks the report
+  delivered; unfinalized report data is not visible to RECEPTIONIST.
+- Technician and Pathologist records are currently scoped by workflow state, not by
+  individual assignment or department. Assignment data is not yet represented in the schema.
+- Laboratory-role patient lists/details return only name, patient code, date of birth, and
+  gender; phone, email, address, and blood group remain hidden. Their patient searches do
+  not match phone numbers.
+- Explicit permission exceptions are restricted to clinical result/report capabilities;
+  catalogue, financial, staff, dashboard, and settings access remain role defaults.

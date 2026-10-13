@@ -14,6 +14,7 @@ export interface CurrentUser {
   email: string;
   role: StaffRole;
   mustChangePassword: boolean;
+  permissions: string[];
 }
 
 function isCurrentUser(value: unknown): value is CurrentUser {
@@ -28,7 +29,9 @@ function isCurrentUser(value: unknown): value is CurrentUser {
     ["OWNER", "ADMIN", "RECEPTIONIST", "TECHNICIAN", "PATHOLOGIST"].includes(
       user.role,
     ) &&
-    typeof user.mustChangePassword === "boolean"
+    typeof user.mustChangePassword === "boolean" &&
+    Array.isArray(user.permissions) &&
+    user.permissions.every((permission) => typeof permission === "string")
   );
 }
 

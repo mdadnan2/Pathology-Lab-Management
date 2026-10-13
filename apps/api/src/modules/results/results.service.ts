@@ -14,6 +14,8 @@ import Decimal from 'decimal.js';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { ReviewResultDto, SaveResultDto } from './dto/result.dto';
+import { PermissionsService } from '../../common/permissions/permissions.service';
+import { PERMISSIONS } from '../../common/permissions/permission-policy';
 
 const ENTRY_ORDER_STATUSES: OrderStatus[] = [
   OrderStatus.SAMPLE_COLLECTED,
@@ -56,6 +58,7 @@ export class ResultsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly permissionsService: PermissionsService,
   ) {}
 
   async findAll(params: {
@@ -123,6 +126,7 @@ export class ResultsService {
   }
 
   async saveDraft(orderItemId: string, dto: SaveResultDto, actorId: string) {
+    await this.permissionsService.assertUserPermission(actorId, PERMISSIONS.RESULTS_ENTER);
     const item = await this.prisma.labOrderItem.findUnique({
       where: { id: orderItemId },
       include: {
@@ -241,6 +245,7 @@ export class ResultsService {
   }
 
   async submit(id: string, actorId: string) {
+    await this.permissionsService.assertUserPermission(actorId, PERMISSIONS.RESULTS_SUBMIT);
     const result = await this.prisma.testResult.findUnique({
       where: { id },
       include: {
@@ -307,11 +312,18 @@ export class ResultsService {
   }
 
   async review(id: string, dto: ReviewResultDto, actorId: string) {
+    await this.permissionsService.assertUserPermission(actorId, PERMISSIONS.RESULTS_REVIEW);
+    if (dto.status === ResultStatus.APPROVED) {
+      await this.permissionsService.assertUserPermission(actorId, PERMISSIONS.RESULTS_APPROVE);
+    }
     const result = await this.prisma.testResult.findUnique({
       where: { id },
       include: { orderItem: { include: { order: { select: { status: true } } } } },
     });
     if (!result) throw new NotFoundException('Result not found');
+    if (result.enteredById === actorId) {
+      throw new ConflictException('You cannot review or approve a result you entered');
+    }
     if (result.orderItem.order.status === OrderStatus.CANCELLED) {
       throw new ConflictException('Cannot review a result for a cancelled order');
     }

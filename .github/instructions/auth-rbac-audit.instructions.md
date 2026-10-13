@@ -19,7 +19,7 @@ applyTo: "apps/api/src/modules/auth/**,apps/api/src/modules/users/**,apps/api/sr
 
 ```ts
 enum Role {
-  OWNER        // full system access
+  OWNER        // system owner; clinical permissions are explicit, not implied
   ADMIN        // lab operations management
   RECEPTIONIST // patient registration, billing
   TECHNICIAN   // sample processing, result entry
@@ -42,25 +42,17 @@ enum Role {
 `RolesGuard` authorizes using this authenticated server-side user, never a role
 supplied in the request body.
 
-## Permission matrix summary
+## Permission policy
 
-See full matrix: [docs/permissions-matrix.md](../../docs/permissions-matrix.md)
-
-| Operation                        | OWNER | ADMIN | RECEPTIONIST | TECHNICIAN | PATHOLOGIST |
-|----------------------------------|-------|-------|--------------|------------|-------------|
-| Manage users & roles             | ✓     | ✓*    | ✗            | ✗          | ✗           |
-| Manage test catalogue & prices   | ✓     | ✓     | ✗            | ✗          | ✗           |
-| Register / edit patients         | ✓     | ✓     | ✓            | ✗          | ✗           |
-| Create orders                    | ✓     | ✓     | ✓            | ✗          | ✗           |
-| Update sample status             | ✓     | ✓     | ✗            | ✓          | ✗           |
-| Enter test results               | ✓     | ✓     | ✗            | ✓          | ✗           |
-| Approve / finalize reports       | ✓     | ✓     | ✗            | ✗          | ✓           |
-| Create invoices                  | ✓     | ✓     | ✓            | ✗          | ✗           |
-| Record payments                  | ✓     | ✓     | ✓            | ✗          | ✗           |
-| View financial dashboard         | ✓     | ✓     | ✗            | ✗          | ✗           |
-| View audit logs                  | ✓     | ✓     | ✗            | ✗          | ✗           |
-
-*ADMIN cannot manage OWNER accounts or change immutable audit history.
+The centralized defaults live in
+[`permission-policy.ts`](../../apps/api/src/common/permissions/permission-policy.ts);
+the complete matrix and exception rules are in
+[`docs/permissions-matrix.md`](../../docs/permissions-matrix.md).
+OWNER and ADMIN receive operational and financial permissions, but no clinical result
+or report permissions by default. Clinical access must be explicitly granted to an
+individual by an OWNER with a reason. Permission events and audit records are append-only.
+Frontend navigation reflects effective permissions, but backend guards and services are
+authoritative.
 
 ## Audit events
 

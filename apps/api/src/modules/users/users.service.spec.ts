@@ -16,6 +16,10 @@ describe('UsersService role boundaries', () => {
   const auditService = {
     log: jest.fn(),
   };
+  const permissionsService = {
+    grantClinicalPermission: jest.fn(),
+    revokeClinicalPermission: jest.fn(),
+  };
   let service: UsersService;
 
   beforeEach(() => {
@@ -23,6 +27,7 @@ describe('UsersService role boundaries', () => {
     service = new UsersService(
       prisma as unknown as PrismaService,
       auditService as unknown as AuditService,
+      permissionsService as never,
     );
   });
 

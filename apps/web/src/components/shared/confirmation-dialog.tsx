@@ -2,6 +2,7 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import { Button } from "@/components/ui/button";
+import type { ReactNode } from "react";
 
 interface ConfirmationDialogProps {
   open: boolean;
@@ -12,6 +13,8 @@ interface ConfirmationDialogProps {
   onConfirm: () => void;
   isPending?: boolean;
   destructive?: boolean;
+  children?: ReactNode;
+  confirmDisabled?: boolean;
 }
 
 export function ConfirmationDialog({
@@ -23,6 +26,8 @@ export function ConfirmationDialog({
   onConfirm,
   isPending = false,
   destructive = false,
+  children,
+  confirmDisabled = false,
 }: ConfirmationDialogProps) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -33,6 +38,7 @@ export function ConfirmationDialog({
           <Dialog.Description className="mt-2 text-sm leading-6 text-muted-foreground">
             {description}
           </Dialog.Description>
+          {children}
           <div className="mt-6 flex justify-end gap-3">
             <Dialog.Close
               render={
@@ -42,7 +48,7 @@ export function ConfirmationDialog({
               }
             />
             <Button
-              disabled={isPending}
+              disabled={isPending || confirmDisabled}
               onClick={onConfirm}
               type="button"
               variant={destructive ? "destructive" : "default"}

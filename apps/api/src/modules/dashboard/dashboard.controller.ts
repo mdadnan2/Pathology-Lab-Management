@@ -6,27 +6,20 @@ import { PasswordChangeGuard } from '../../common/guards/password-change.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { OrderStatus, Role } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
-
-interface DashboardStats {
-  totalPatients: number;
-  pendingOrders: number;
-  processingOrders: number;
-  completedOrders: number;
-  pendingSamples: number;
-  collectedSamples: number;
-  totalTests: number;
-  activeCategories: number;
-}
+import { PermissionsGuard } from '../../common/permissions/permissions.guard';
+import { RequirePermissions } from '../../common/permissions/permissions.decorator';
+import { PERMISSIONS } from '../../common/permissions/permission-policy';
 
 @ApiTags('dashboard')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, PasswordChangeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard, PasswordChangeGuard)
 @Controller('dashboard')
 export class DashboardController {
   constructor(private prisma: PrismaService) {}
 
   @Get()
-  @Roles(Role.OWNER, Role.ADMIN, Role.RECEPTIONIST, Role.TECHNICIAN, Role.PATHOLOGIST)
+  @Roles(Role.OWNER, Role.ADMIN)
+  @RequirePermissions(PERMISSIONS.DASHBOARD_VIEW)
   @ApiOperation({ summary: 'Get dashboard statistics' })
   async getStats() {
     const [totalPatients, pendingOrders, processingOrders, completedOrders, pendingSamples, collectedSamples, totalTests, activeCategories] = await Promise.all([

@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Patch, Body, Param, Query, UseGuards,
+  BadRequestException, Controller, Get, Post, Patch, Body, Param, Query, UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
@@ -11,11 +11,28 @@ import { PasswordChangeGuard } from '../../common/guards/password-change.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '@prisma/client';
+import { RequirePermissions } from '../../common/permissions/permissions.decorator';
+import { PermissionsGuard } from '../../common/permissions/permissions.guard';
+import { PERMISSIONS, isPermissionKey } from '../../common/permissions/permission-policy';
+import { IsString, MaxLength, MinLength } from 'class-validator';
+
+class PermissionChangeDto {
+  @IsString()
+  @MinLength(5)
+  @MaxLength(500)
+  reason!: string;
+}
+
+class GrantPermissionDto extends PermissionChangeDto {
+  @IsString()
+  permission!: string;
+}
 
 @ApiTags('users')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, PasswordChangeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard, PasswordChangeGuard)
 @Roles(Role.OWNER, Role.ADMIN)
+@RequirePermissions(PERMISSIONS.STAFF_MANAGE)
 @Controller('users')
 export class UsersController {
   constructor(private usersService: UsersService) {}
@@ -64,5 +81,34 @@ export class UsersController {
   @ApiOperation({ summary: 'Reset staff password' })
   resetPassword(@Param('id') id: string, @CurrentUser() actor: User) {
     return this.usersService.resetPassword(id, actor.id, actor.role);
+  }
+
+  @Post(':id/permissions')
+  @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)
+  @ApiOperation({ summary: 'Grant explicit clinical permission to a staff account' })
+  grantPermission(
+    @Param('id') id: string,
+    @Body() dto: GrantPermissionDto,
+    @CurrentUser() actor: User,
+  ) {
+    if (!isPermissionKey(dto.permission)) {
+      throw new BadRequestException('Unknown permission');
+    }
+    return this.usersService.grantPermission(id, dto.permission, actor.id, dto.reason);
+  }
+
+  @Post(':id/permissions/:permission/revoke')
+  @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)
+  @ApiOperation({ summary: 'Revoke explicit clinical permission from a staff account' })
+  revokePermission(
+    @Param('id') id: string,
+    @Param('permission') permission: string,
+    @Body() dto: PermissionChangeDto,
+    @CurrentUser() actor: User,
+  ) {
+    if (!isPermissionKey(permission)) {
+      throw new BadRequestException('Unknown permission');
+    }
+    return this.usersService.revokePermission(id, permission, actor.id, dto.reason);
   }
 }

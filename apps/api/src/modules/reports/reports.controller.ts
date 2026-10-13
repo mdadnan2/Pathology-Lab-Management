@@ -14,6 +14,9 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ReportStatus, Role, User } from '@prisma/client';
 import type { Response } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { PermissionsGuard } from '../../common/permissions/permissions.guard';
+import { RequirePermissions } from '../../common/permissions/permissions.decorator';
+import { PERMISSIONS } from '../../common/permissions/permission-policy';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PasswordChangeGuard } from '../../common/guards/password-change.guard';
@@ -29,15 +32,17 @@ const REPORT_READ_ROLES = [
 
 @ApiTags('reports')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, PasswordChangeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard, PasswordChangeGuard)
 @Controller('reports')
 export class ReportsController {
   constructor(private readonly service: ReportsService) {}
 
   @Get()
   @Roles(...REPORT_READ_ROLES)
+  @RequirePermissions(PERMISSIONS.REPORTS_VIEW)
   @ApiOperation({ summary: 'List reports' })
   findAll(
+    @CurrentUser() actor: User,
     @Query('page') page = '1',
     @Query('limit') limit = '10',
     @Query('status', new ParseEnumPipe(ReportStatus, { optional: true })) status?: ReportStatus,
@@ -62,11 +67,12 @@ export class ReportsController {
       search,
       from: parseDate(from, false),
       to: parseDate(to, true),
+      role: actor.role,
     });
   }
 
   @Get('eligible-orders')
-  @Roles(Role.OWNER, Role.ADMIN, Role.PATHOLOGIST)
+  @RequirePermissions(PERMISSIONS.REPORTS_GENERATE)
   @ApiOperation({ summary: 'List approved orders without a report' })
   findEligibleOrders(
     @Query('page') page = '1',
@@ -80,20 +86,21 @@ export class ReportsController {
 
   @Get(':id')
   @Roles(...REPORT_READ_ROLES)
+  @RequirePermissions(PERMISSIONS.REPORTS_VIEW)
   @ApiOperation({ summary: 'Get report details' })
-  findOne(@Param('id') id: string) {
-    return this.service.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() actor: User) {
+    return this.service.findOne(id, actor.role);
   }
 
   @Post('orders/:orderId/generate')
-  @Roles(Role.OWNER, Role.ADMIN, Role.PATHOLOGIST)
+  @RequirePermissions(PERMISSIONS.REPORTS_GENERATE)
   @ApiOperation({ summary: 'Generate a report for an approved order' })
   generate(@Param('orderId') orderId: string, @CurrentUser() actor: User) {
     return this.service.generate(orderId, actor.id);
   }
 
   @Patch(':id/approve')
-  @Roles(Role.OWNER, Role.ADMIN, Role.PATHOLOGIST)
+  @RequirePermissions(PERMISSIONS.REPORTS_APPROVE)
   @ApiOperation({ summary: 'Approve a generated report' })
   approve(@Param('id') id: string, @CurrentUser() actor: User) {
     return this.service.approve(id, actor.id);
@@ -101,6 +108,7 @@ export class ReportsController {
 
   @Post(':id/download')
   @Roles(...REPORT_READ_ROLES)
+  @RequirePermissions(PERMISSIONS.REPORTS_DOWNLOAD)
   @ApiOperation({ summary: 'Deliver and download an approved report PDF' })
   async download(
     @Param('id') id: string,

@@ -31,6 +31,7 @@ describe('ResultsService', () => {
     $transaction: jest.fn(),
   };
   const auditService = { log: jest.fn() };
+  const permissionsService = { assertUserPermission: jest.fn().mockResolvedValue(undefined) };
   let service: ResultsService;
 
   const item = (overrides: Record<string, unknown> = {}) => ({
@@ -82,6 +83,7 @@ describe('ResultsService', () => {
     service = new ResultsService(
       prisma as unknown as PrismaService,
       auditService as unknown as AuditService,
+      permissionsService as never,
     );
   });
 
@@ -223,6 +225,24 @@ describe('ResultsService', () => {
     });
     await expect(service.review('result-1', { status: 'APPROVED' }, 'pathologist-1'))
       .rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('prevents an entered result from being reviewed by the same staff member', async () => {
+    prisma.testResult.findUnique.mockResolvedValue({
+      id: 'result-1',
+      enteredById: 'pathologist-1',
+      status: ResultStatus.UNDER_REVIEW,
+      orderItem: {
+        id: 'item-1',
+        orderId: 'order-1',
+        order: { status: OrderStatus.PROCESSING },
+      },
+    });
+
+    await expect(
+      service.review('result-1', { status: 'APPROVED' }, 'pathologist-1'),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('requires a rejection reason', async () => {

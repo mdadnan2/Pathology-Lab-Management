@@ -17,6 +17,7 @@ describe('AuthService.changePassword', () => {
   const auditService = {
     log: jest.fn(),
   };
+  const permissionsService = { getPermissions: jest.fn().mockResolvedValue([]) };
   let service: AuthService;
 
   beforeEach(() => {
@@ -25,6 +26,7 @@ describe('AuthService.changePassword', () => {
       prisma as unknown as PrismaService,
       {} as never,
       auditService as unknown as AuditService,
+      permissionsService as never,
     );
   });
 

@@ -8,7 +8,7 @@ import { getCurrentUser } from "@/lib/api/auth";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, ClipboardCheck, ClipboardList, FileCheck2, LayoutDashboard, LogOut, Microscope, Receipt, TestTube, UsersRound, UserRound, FlaskConical } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
 interface DashboardShellProps {
@@ -17,6 +17,7 @@ interface DashboardShellProps {
 
 export function DashboardShell({ children }: DashboardShellProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const queryClient = useQueryClient();
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const profile = useQuery({
@@ -32,6 +33,11 @@ export function DashboardShell({ children }: DashboardShellProps) {
       router.refresh();
     },
   });
+
+  useEffect(() => {
+    document.documentElement.classList.add("dashboard-scrollbars");
+    return () => document.documentElement.classList.remove("dashboard-scrollbars");
+  }, []);
 
   useEffect(() => {
     if (profile.data?.mustChangePassword) {
@@ -82,15 +88,36 @@ export function DashboardShell({ children }: DashboardShellProps) {
     );
   }
 
-  const canManageStaff =
-    profile.data.role === "OWNER" || profile.data.role === "ADMIN";
-  const canViewResults = ["OWNER", "ADMIN", "TECHNICIAN", "PATHOLOGIST"].includes(profile.data.role);
-  const canViewReports = ["OWNER", "ADMIN", "RECEPTIONIST", "PATHOLOGIST"].includes(profile.data.role);
+  const navigationItems = [
+    { href: "/dashboard", label: "Overview", permission: "dashboard.view", icon: LayoutDashboard },
+    { href: "/patients", label: "Patients", permission: "patients.view", icon: UserRound },
+    { href: "/test-catalogue", label: "Test catalogue", permission: "catalogue.view", icon: TestTube },
+    { href: "/orders", label: "Test orders", permission: "orders.view", icon: ClipboardList },
+    { href: "/samples", label: "Samples", permission: "samples.view", icon: FlaskConical },
+    { href: "/results", label: "Results", permission: "results.view", icon: ClipboardCheck },
+    { href: "/reports", label: "Reports", permission: "reports.view", icon: FileCheck2 },
+    { href: "/billing", label: "Billing", permission: "billing.view", icon: Receipt },
+    { href: "/staff", label: "Staff & roles", permission: "staff.manage", icon: UsersRound },
+  ].filter((item) => profile.data.permissions.includes(item.permission));
+  const isActive = (href: string) =>
+    pathname === href || (href !== "/dashboard" && pathname.startsWith(`${href}/`));
+  const mobileLinkClass = (href: string) =>
+    `whitespace-nowrap rounded-lg px-3 py-1.5 text-sm ${
+      isActive(href)
+        ? "bg-muted font-medium text-foreground"
+        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+    }`;
+  const sidebarLinkClass = (href: string) =>
+    `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition ${
+      isActive(href)
+        ? "bg-muted font-medium text-foreground"
+        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+    }`;
 
   return (
-    <div className="min-h-screen bg-muted/30">
-      <header className="border-b bg-background">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 sm:px-8">
+    <div className="dashboard-shell min-h-screen bg-muted/30">
+      <header className="sticky top-0 z-40 border-b bg-background">
+        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-5 sm:px-8">
           <div className="flex items-center gap-3">
             <span className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
               <Microscope aria-hidden="true" className="size-5" />
@@ -152,74 +179,37 @@ export function DashboardShell({ children }: DashboardShellProps) {
       />
       <nav
         aria-label="Main navigation"
-        className="flex gap-1 overflow-x-auto border-b bg-background px-5 py-2 lg:hidden"
+        className="sticky top-14 z-30 flex gap-1 overflow-x-auto border-b bg-background px-5 py-1 lg:hidden"
       >
-        <Link
-          className="rounded-lg bg-muted px-3 py-2 text-sm font-medium"
-          href="/dashboard"
-        >
-          Overview
-        </Link>
-        <Link className="whitespace-nowrap rounded-lg px-3 py-2 text-sm text-muted-foreground" href="/patients"><UserRound aria-hidden="true" className="mr-1 inline size-4" />Patients</Link>
-        <Link className="whitespace-nowrap rounded-lg px-3 py-2 text-sm text-muted-foreground" href="/test-catalogue"><TestTube aria-hidden="true" className="mr-1 inline size-4" />Catalogue</Link>
-        <Link className="whitespace-nowrap rounded-lg px-3 py-2 text-sm text-muted-foreground" href="/orders"><ClipboardList aria-hidden="true" className="mr-1 inline size-4" />Orders</Link>
-        <Link className="whitespace-nowrap rounded-lg px-3 py-2 text-sm text-muted-foreground" href="/samples"><FlaskConical aria-hidden="true" className="mr-1 inline size-4" />Samples</Link>
-        {canViewResults && <Link className="whitespace-nowrap rounded-lg px-3 py-2 text-sm text-muted-foreground" href="/results"><ClipboardCheck aria-hidden="true" className="mr-1 inline size-4" />Results</Link>}
-        {canViewReports && <Link className="whitespace-nowrap rounded-lg px-3 py-2 text-sm text-muted-foreground" href="/reports"><FileCheck2 aria-hidden="true" className="mr-1 inline size-4" />Reports</Link>}
-        <Link className="whitespace-nowrap rounded-lg px-3 py-2 text-sm text-muted-foreground" href="/billing"><Receipt aria-hidden="true" className="mr-1 inline size-4" />Billing</Link>
-        {canManageStaff && (
+        {navigationItems.map(({ href, label, icon: Icon }) => (
           <Link
-            className="rounded-lg px-3 py-2 text-sm text-muted-foreground"
-            href="/staff"
+            aria-current={isActive(href) ? "page" : undefined}
+            className={mobileLinkClass(href)}
+            href={href}
+            key={href}
           >
-            Staff &amp; roles
+            <Icon aria-hidden="true" className="mr-1 inline size-4" />
+            {label}
           </Link>
-        )}
+        ))}
       </nav>
-      <div className="mx-auto min-h-[calc(100vh-4rem)] max-w-7xl lg:grid lg:grid-cols-[220px_minmax(0,1fr)]">
-        <aside className="hidden border-r bg-background px-4 py-6 lg:block">
+      <div className="mx-auto min-h-[calc(100vh-3.5rem)] max-w-7xl lg:grid lg:grid-cols-[220px_minmax(0,1fr)]">
+        <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] self-start overflow-y-auto border-r bg-background px-4 py-6 lg:block">
           <p className="mb-3 px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Workspace
           </p>
           <nav aria-label="Main navigation" className="space-y-1">
-            <Link
-              className="flex items-center gap-3 rounded-lg bg-muted px-3 py-2.5 text-sm font-medium"
-              href="/dashboard"
-            >
-              <LayoutDashboard aria-hidden="true" className="size-4" />
-              Overview
-            </Link>
-            <Link className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground" href="/patients">
-              <UserRound aria-hidden="true" className="size-4" />
-              Patients
-            </Link>
-            <Link className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground" href="/test-catalogue">
-              <TestTube aria-hidden="true" className="size-4" />
-              Test catalogue
-            </Link>
-            <Link className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground" href="/orders">
-              <ClipboardList aria-hidden="true" className="size-4" />
-              Test orders
-            </Link>
-            <Link className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground" href="/samples">
-              <FlaskConical aria-hidden="true" className="size-4" />
-              Samples
-            </Link>
-            {canViewResults && <Link className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground" href="/results"><ClipboardCheck aria-hidden="true" className="size-4" />Results</Link>}
-            {canViewReports && <Link className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground" href="/reports"><FileCheck2 aria-hidden="true" className="size-4" />Reports</Link>}
-            <Link className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground" href="/billing">
-              <Receipt aria-hidden="true" className="size-4" />
-              Billing
-            </Link>
-            {canManageStaff && (
+            {navigationItems.map(({ href, label, icon: Icon }) => (
               <Link
-                className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                href="/staff"
+                aria-current={isActive(href) ? "page" : undefined}
+                className={sidebarLinkClass(href)}
+                href={href}
+                key={href}
               >
-                <UsersRound aria-hidden="true" className="size-4" />
-                Staff &amp; roles
+                <Icon aria-hidden="true" className="size-4" />
+                {label}
               </Link>
-            )}
+            ))}
           </nav>
           <p className="mt-8 px-3 text-xs leading-5 text-muted-foreground">
             Fictional demonstration data only. Not for clinical use.

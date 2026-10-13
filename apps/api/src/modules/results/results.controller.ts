@@ -2,6 +2,9 @@ import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards, ParseEnumP
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ResultStatus, Role, User } from '@prisma/client';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { PermissionsGuard } from '../../common/permissions/permissions.guard';
+import { RequirePermissions } from '../../common/permissions/permissions.decorator';
+import { PERMISSIONS } from '../../common/permissions/permission-policy';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PasswordChangeGuard } from '../../common/guards/password-change.guard';
@@ -11,12 +14,13 @@ import { ResultsService } from './results.service';
 
 @ApiTags('results')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, PasswordChangeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard, PasswordChangeGuard)
 @Controller('results')
 export class ResultsController {
   constructor(private readonly service: ResultsService) {}
 
   @Get()
+  @RequirePermissions(PERMISSIONS.RESULTS_VIEW)
   @Roles(Role.OWNER, Role.ADMIN, Role.TECHNICIAN, Role.PATHOLOGIST)
   @ApiOperation({ summary: 'List order results and eligible items' })
   findAll(
@@ -35,6 +39,7 @@ export class ResultsController {
   }
 
   @Get(':id')
+  @RequirePermissions(PERMISSIONS.RESULTS_VIEW)
   @Roles(Role.OWNER, Role.ADMIN, Role.TECHNICIAN, Role.PATHOLOGIST)
   @ApiOperation({ summary: 'Get a result' })
   findOne(@Param('id') id: string, @CurrentUser() actor: User) {
@@ -43,6 +48,7 @@ export class ResultsController {
 
   @Post('items/:orderItemId')
   @Roles(Role.OWNER, Role.ADMIN, Role.TECHNICIAN)
+  @RequirePermissions(PERMISSIONS.RESULTS_ENTER)
   @ApiOperation({ summary: 'Save result draft for an order item' })
   saveDraft(
     @Param('orderItemId') orderItemId: string,
@@ -54,13 +60,14 @@ export class ResultsController {
 
   @Post(':id/submit')
   @Roles(Role.OWNER, Role.ADMIN, Role.TECHNICIAN)
+  @RequirePermissions(PERMISSIONS.RESULTS_SUBMIT)
   @ApiOperation({ summary: 'Submit a result for review' })
   submit(@Param('id') id: string, @CurrentUser() actor: User) {
     return this.service.submit(id, actor.id);
   }
 
   @Patch(':id/review')
-  @Roles(Role.OWNER, Role.ADMIN, Role.PATHOLOGIST)
+  @RequirePermissions(PERMISSIONS.RESULTS_REVIEW)
   @ApiOperation({ summary: 'Review, approve, or reject a submitted result' })
   review(
     @Param('id') id: string,

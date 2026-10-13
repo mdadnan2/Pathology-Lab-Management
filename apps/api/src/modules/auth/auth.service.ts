@@ -11,6 +11,7 @@ import { AuditService } from '../audit/audit.service';
 import { LoginDto } from './dto/login.dto';
 import { AuditAction } from '@prisma/client';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { PermissionsService } from '../../common/permissions/permissions.service';
 
 @Injectable()
 export class AuthService {
@@ -20,6 +21,7 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private auditService: AuditService,
+    private permissionsService: PermissionsService,
   ) {}
 
   async login(dto: LoginDto) {
@@ -63,7 +65,10 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException();
     const { passwordHash: _, ...userWithoutPassword } = user;
-    return userWithoutPassword;
+    return {
+      ...userWithoutPassword,
+      permissions: await this.permissionsService.getPermissions(user.id, user.role),
+    };
   }
 
   async changePassword(userId: string, dto: ChangePasswordDto) {

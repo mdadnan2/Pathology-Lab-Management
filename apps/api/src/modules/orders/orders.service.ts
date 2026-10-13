@@ -1,7 +1,7 @@
 import {
   Injectable, NotFoundException, BadRequestException, Logger,
 } from '@nestjs/common';
-import { AuditAction, OrderStatus, SampleStatus } from '@prisma/client';
+import { AuditAction, OrderStatus, ResultStatus, Role, SampleStatus } from '@prisma/client';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -180,18 +180,35 @@ export class OrdersService {
       },
     });
 
-    return this.findOne(result.order.id);
+    return this.findOne(result.order.id, Role.RECEPTIONIST);
   }
 
   async findAll(params: {
-    page: number; limit: number; search?: string;
+    page: number; limit: number; search?: string; role: Role;
     status?: OrderStatus; sampleStatus?: SampleStatus; patientId?: string; from?: Date; to?: Date;
   }) {
-    const { page, limit, search, status, sampleStatus, patientId, from, to } = params;
+    const { page, limit, search, status, sampleStatus, patientId, from, to, role } = params;
     const skip = (page - 1) * limit;
 
     const where = {
-      ...(status && { status }),
+      AND: [
+        ...(status ? [{ status }] : []),
+        ...(role === Role.TECHNICIAN
+          ? [{
+              status: {
+                in: [OrderStatus.SAMPLE_COLLECTED, OrderStatus.PROCESSING, OrderStatus.RESULT_ENTERED],
+              },
+            }]
+          : role === Role.PATHOLOGIST
+            ? [{
+                items: {
+                  some: {
+                    result: { is: { status: { in: [ResultStatus.SUBMITTED, ResultStatus.UNDER_REVIEW] } } },
+                  },
+                },
+              }]
+            : []),
+      ],
       ...(sampleStatus && { samples: { some: { status: sampleStatus } } }),
       ...(patientId && { patientId }),
       ...(from || to ? { createdAt: { ...(from && { gte: from }), ...(to && { lte: to }) } } : {}),
@@ -209,10 +226,14 @@ export class OrdersService {
       this.prisma.labOrder.findMany({
         where, skip, take: limit, orderBy: { createdAt: 'desc' },
         include: {
-          patient: { select: { id: true, patientCode: true, firstName: true, lastName: true, phone: true } },
+          patient: role === Role.TECHNICIAN || role === Role.PATHOLOGIST
+            ? { select: { id: true, patientCode: true, firstName: true, lastName: true } }
+            : { select: { id: true, patientCode: true, firstName: true, lastName: true, phone: true } },
           items: { include: { labTest: { select: { name: true, code: true } } } },
           samples: { select: { sampleId: true, status: true } },
-          invoice: { select: { invoiceNumber: true, totalAmount: true, paidAmount: true, status: true } },
+          invoice: role === Role.TECHNICIAN || role === Role.PATHOLOGIST
+            ? false
+            : { select: { invoiceNumber: true, totalAmount: true, paidAmount: true, status: true } },
           createdBy: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
         },
       }),
@@ -222,17 +243,34 @@ export class OrdersService {
     return { data: orders, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   }
 
-  async findOne(id: string) {
-    const order = await this.prisma.labOrder.findUnique({
-      where: { id },
+  async findOne(id: string, role: Role) {
+    const order = await this.prisma.labOrder.findFirst({
+      where: {
+        id,
+        ...(role === Role.TECHNICIAN
+          ? { status: { in: [OrderStatus.SAMPLE_COLLECTED, OrderStatus.PROCESSING, OrderStatus.RESULT_ENTERED] } }
+          : role === Role.PATHOLOGIST
+            ? {
+                items: {
+                  some: {
+                    result: { is: { status: { in: [ResultStatus.SUBMITTED, ResultStatus.UNDER_REVIEW] } } },
+                  },
+                },
+              }
+            : {}),
+      },
       include: {
-        patient: true,
+        patient: role === Role.TECHNICIAN || role === Role.PATHOLOGIST
+          ? { select: { id: true, patientCode: true, firstName: true, lastName: true, dateOfBirth: true, gender: true } }
+          : true,
         items: {
           include: { labTest: { include: { parameters: true } } },
         },
         samples: { include: { collectedBy: { select: { firstName: true, lastName: true } } } },
-        invoice: { include: { items: true, payments: true } },
-        report: true,
+        invoice: role === Role.TECHNICIAN || role === Role.PATHOLOGIST
+          ? false
+          : { include: { items: true, payments: true } },
+        report: role === Role.TECHNICIAN || role === Role.PATHOLOGIST ? false : true,
         createdBy: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
       },
     });

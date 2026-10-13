@@ -13,6 +13,9 @@ applyTo: "apps/api/src/modules/patients/**,apps/api/src/modules/orders/**,apps/a
 - Search by name, phone, or patientCode — paginated
 - Duplicate detection: warn if same name + phone already exists; do not block registration
 - Patient records are never hard-deleted
+- Technician and Pathologist patient results are limited to active workflow scope and
+  return only name, patient code, date of birth, and gender. Their patient searches must
+  not match phone numbers; phone, email, address, and blood group remain hidden.
 
 ## Test catalogue
 

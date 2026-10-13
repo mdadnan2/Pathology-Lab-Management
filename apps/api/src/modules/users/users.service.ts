@@ -13,6 +13,8 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 import { AuditAction } from '@prisma/client';
+import { PermissionsService } from '../../common/permissions/permissions.service';
+import { PermissionKey } from '../../common/permissions/permission-policy';
 
 const ADMIN_MANAGED_ROLES = [
   Role.RECEPTIONIST,
@@ -36,6 +38,7 @@ export class UsersService {
   constructor(
     private prisma: PrismaService,
     private auditService: AuditService,
+    private permissionsService: PermissionsService,
   ) {}
 
   private async generateEmployeeCode(): Promise<string> {
@@ -151,6 +154,9 @@ export class UsersService {
         `An ${actorRole} cannot manage an account with the ${user.role} role`,
       );
     }
+    if (dto.role && id === actorId) {
+      throw new ForbiddenException('You cannot change your own role');
+    }
 
     if (dto.role && !canManageRole(actorRole, dto.role)) {
       throw new ForbiddenException(
@@ -175,6 +181,24 @@ export class UsersService {
     });
 
     return updated;
+  }
+
+  async grantPermission(
+    id: string,
+    permission: PermissionKey,
+    actorId: string,
+    reason: string,
+  ) {
+    return this.permissionsService.grant(id, permission, actorId, reason);
+  }
+
+  async revokePermission(
+    id: string,
+    permission: PermissionKey,
+    actorId: string,
+    reason: string,
+  ) {
+    return this.permissionsService.revoke(id, permission, actorId, reason);
   }
 
   async deactivate(id: string, actorId: string, actorRole: Role) {

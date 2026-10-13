@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -20,17 +21,20 @@ describe('BillingService', () => {
       findMany: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     payment: {
       create: jest.fn(),
       findMany: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     financialAdjustment: { create: jest.fn() },
     $transaction: jest.fn(),
   };
   const auditService = { log: jest.fn() };
+  const permissionsService = { assertUserPermission: jest.fn().mockResolvedValue(undefined) };
   let service: BillingService;
 
   const invoice = (overrides: Record<string, unknown> = {}) => ({
@@ -53,6 +57,7 @@ describe('BillingService', () => {
     prisma.invoice.findMany.mockResolvedValue([]);
     prisma.invoice.count.mockResolvedValue(0);
     prisma.invoice.update.mockResolvedValue({});
+    prisma.invoice.updateMany.mockResolvedValue({ count: 1 });
     prisma.payment.create.mockResolvedValue({ id: 'payment-1' });
     prisma.payment.findUnique.mockResolvedValue({
       id: 'payment-1',
@@ -62,11 +67,13 @@ describe('BillingService', () => {
     });
     prisma.payment.findMany.mockResolvedValue([]);
     prisma.payment.update.mockResolvedValue({});
+    prisma.payment.updateMany.mockResolvedValue({ count: 1 });
     prisma.financialAdjustment.create.mockResolvedValue({});
     auditService.log.mockResolvedValue(undefined);
     service = new BillingService(
       prisma as unknown as PrismaService,
       auditService as unknown as AuditService,
+      permissionsService as never,
     );
   });
 
@@ -126,8 +133,8 @@ describe('BillingService', () => {
         recordedById: 'cashier-1',
       }),
     });
-    expect(prisma.invoice.update).toHaveBeenCalledWith({
-      where: { id: 'invoice-1' },
+    expect(prisma.invoice.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: 'invoice-1', paidAmount: '50.05' }),
       data: { paidAmount: '100.10', status: InvoiceStatus.PAID },
     });
     expect(auditService.log).toHaveBeenCalledWith(
@@ -151,6 +158,19 @@ describe('BillingService', () => {
       ),
     ).rejects.toThrow(BadRequestException);
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale payment if the invoice changed before the conditional update', async () => {
+    prisma.invoice.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      service.recordPayment(
+        'invoice-1',
+        { amount: 10, method: PaymentMethod.CASH },
+        'cashier-1',
+      ),
+    ).rejects.toThrow(ConflictException);
+    expect(prisma.payment.create).not.toHaveBeenCalled();
   });
 
   it.each([InvoiceStatus.PAID, InvoiceStatus.CANCELLED])(
@@ -190,8 +210,8 @@ describe('BillingService', () => {
         authorizedById: 'admin-1',
       }),
     });
-    expect(prisma.invoice.update).toHaveBeenCalledWith({
-      where: { id: 'invoice-1' },
+    expect(prisma.invoice.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: 'invoice-1' }),
       data: {
         discountAmount: '5.40',
         totalAmount: '94.60',
@@ -246,8 +266,8 @@ describe('BillingService', () => {
         authorizedById: 'owner-1',
       }),
     });
-    expect(prisma.invoice.update).toHaveBeenCalledWith({
-      where: { id: 'invoice-1' },
+    expect(prisma.invoice.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: 'invoice-1' }),
       data: { status: InvoiceStatus.CANCELLED, cancelledAt: expect.any(Date) },
     });
     expect(auditService.log).toHaveBeenCalledWith(
@@ -276,14 +296,20 @@ describe('BillingService', () => {
       invoice({ totalAmount: '100.00', paidAmount: '50.05' }),
     );
 
-    await service.reversePayment('invoice-1', 'payment-1', 'admin-1', Role.ADMIN);
+    await service.reversePayment(
+      'invoice-1',
+      'payment-1',
+      { reason: 'Duplicate payment' },
+      'admin-1',
+      Role.ADMIN,
+    );
 
-    expect(prisma.payment.update).toHaveBeenCalledWith({
-      where: { id: 'payment-1' },
+    expect(prisma.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: 'payment-1', invoiceId: 'invoice-1', isReversed: false },
       data: { isReversed: true, reversedAt: expect.any(Date) },
     });
-    expect(prisma.invoice.update).toHaveBeenCalledWith({
-      where: { id: 'invoice-1' },
+    expect(prisma.invoice.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: 'invoice-1', paidAmount: '50.05' }),
       data: { paidAmount: '30.04', status: InvoiceStatus.PARTIALLY_PAID },
     });
     expect(auditService.log).toHaveBeenCalledWith(
@@ -300,7 +326,13 @@ describe('BillingService', () => {
     });
 
     await expect(
-      service.reversePayment('invoice-1', 'payment-1', 'admin-1', Role.ADMIN),
+      service.reversePayment(
+        'invoice-1',
+        'payment-1',
+        { reason: 'Duplicate payment' },
+        'admin-1',
+        Role.ADMIN,
+      ),
     ).rejects.toThrow(NotFoundException);
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });

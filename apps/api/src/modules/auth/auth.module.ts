@@ -6,6 +6,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
 import { AuditModule } from '../audit/audit.module';
+import { PermissionsModule } from '../../common/permissions/permissions.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { AuditModule } from '../audit/audit.module';
       }),
     }),
     AuditModule,
+    PermissionsModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],

@@ -10,6 +10,7 @@ import {
   type Invoice, type PaymentMethod,
 } from "@/lib/api/laboratory";
 import { formatCurrency, formatDateTime, titleCase } from "@/lib/format";
+import { getCurrentUser } from "@/lib/api/auth";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
@@ -52,6 +53,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const [cancelConfirmationOpen, setCancelConfirmationOpen] = useState(false);
   const [cancelValues, setCancelValues] = useState<CancelValues | null>(null);
   const [paymentToReverse, setPaymentToReverse] = useState<{ id: string; amount: string } | null>(null);
+  const [reverseReason, setReverseReason] = useState("");
   const [itemsPage, setItemsPage] = useState(1);
   const [paymentsPage, setPaymentsPage] = useState(1);
   const [adjustmentsPage, setAdjustmentsPage] = useState(1);
@@ -60,13 +62,18 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     queryKey: ["invoices", id],
     queryFn: () => getInvoice(id),
   });
+  const profile = useQuery({
+    queryKey: ["auth", "me"],
+    queryFn: getCurrentUser,
+    retry: false,
+  });
 
-  const paymentForm = useForm<PaymentValues>({
+  const paymentForm = useForm<z.input<typeof paymentSchema>, unknown, PaymentValues>({
     resolver: zodResolver(paymentSchema),
     defaultValues: { amount: 0, method: "CASH" },
   });
 
-  const discountForm = useForm<DiscountValues>({
+  const discountForm = useForm<z.input<typeof discountSchema>, unknown, DiscountValues>({
     resolver: zodResolver(discountSchema),
     defaultValues: { amount: 0, reason: "" },
   });
@@ -103,17 +110,23 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   });
 
   const reverseMutation = useMutation({
-    mutationFn: (paymentId: string) => reversePayment(id, paymentId),
+    mutationFn: ({ paymentId, reason }: { paymentId: string; reason: string }) =>
+      reversePayment(id, paymentId, { reason }),
     onSuccess: async () => {
       await invalidate();
       setPaymentToReverse(null);
+      setReverseReason("");
     },
   });
 
   const inv = invoice.data;
   const balance = inv ? (Number(inv.totalAmount) - Number(inv.paidAmount)).toFixed(2) : "0.00";
   const canAct = inv && inv.status !== "CANCELLED";
-  const canPay = canAct && inv.status !== "PAID";
+  const permissions = profile.data?.permissions ?? [];
+  const canPay = canAct && inv.status !== "PAID" && permissions.includes("payments.record");
+  const canDiscount = canAct && permissions.includes("billing.apply_discount");
+  const canCancel = canAct && permissions.includes("invoices.cancel");
+  const canReverse = canAct && permissions.includes("payments.reverse");
 
   return (
     <div className="mx-auto max-w-4xl space-y-7">
@@ -136,7 +149,10 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       <ConfirmationDialog
         open={paymentToReverse !== null}
         onOpenChange={(open) => {
-          if (!open && !reverseMutation.isPending) setPaymentToReverse(null);
+          if (!open && !reverseMutation.isPending) {
+            setPaymentToReverse(null);
+            setReverseReason("");
+          }
         }}
         title="Reverse payment?"
         description={
@@ -146,11 +162,31 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         }
         confirmLabel="Reverse payment"
         onConfirm={() => {
-          if (paymentToReverse) reverseMutation.mutate(paymentToReverse.id);
+          if (paymentToReverse) {
+            reverseMutation.mutate({
+              paymentId: paymentToReverse.id,
+              reason: reverseReason.trim(),
+            });
+          }
         }}
         isPending={reverseMutation.isPending}
         destructive
-      />
+        confirmDisabled={reverseReason.trim().length < 5}
+      >
+        <div className="mt-4 space-y-1">
+          <label className="text-sm font-medium" htmlFor="reverse-reason">Reason for reversal</label>
+          <textarea
+            className="min-h-20 w-full rounded-lg border bg-background px-3 py-2 text-sm"
+            id="reverse-reason"
+            maxLength={500}
+            onChange={(event) => setReverseReason(event.target.value)}
+            value={reverseReason}
+          />
+          {reverseReason.trim().length < 5 && (
+            <p className="text-xs text-muted-foreground">Enter at least 5 characters.</p>
+          )}
+        </div>
+      </ConfirmationDialog>
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1">
           <Link className="text-sm text-muted-foreground hover:underline" href="/billing">← Billing</Link>
@@ -170,12 +206,16 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                 Record payment
               </Button>
             )}
-            <Button onClick={() => setPanel(panel === "discount" ? null : "discount")} size="sm" variant="outline">
-              Apply discount
-            </Button>
-            <Button onClick={() => setPanel(panel === "cancel" ? null : "cancel")} size="sm" variant="outline">
-              Cancel invoice
-            </Button>
+            {canDiscount && (
+              <Button onClick={() => setPanel(panel === "discount" ? null : "discount")} size="sm" variant="outline">
+                Apply discount
+              </Button>
+            )}
+            {canCancel && (
+              <Button onClick={() => setPanel(panel === "cancel" ? null : "cancel")} size="sm" variant="outline">
+                Cancel invoice
+              </Button>
+            )}
           </div>
         )}
       </header>
@@ -375,7 +415,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                         </td>
                         <td className="px-5 py-3 text-xs text-muted-foreground">{payment.recordedBy.firstName} {payment.recordedBy.lastName}</td>
                         <td className="px-5 py-3">
-                          {!payment.isReversed && canAct && (
+                          {!payment.isReversed && canReverse && (
                             <Button
                               disabled={reverseMutation.isPending}
                               onClick={() => setPaymentToReverse({ id: payment.id, amount: payment.amount })}

@@ -478,8 +478,9 @@ export async function cancelInvoice(
 export async function reversePayment(
   invoiceId: string,
   paymentId: string,
+  values: { reason: string },
 ): Promise<Invoice> {
-  return (await apiRequest<Invoice>(`/invoices/${invoiceId}/payments/${paymentId}/reverse`, { method: "PATCH" })).data;
+  return (await apiRequest<Invoice>(`/invoices/${invoiceId}/payments/${paymentId}/reverse`, { method: "PATCH", data: values })).data;
 }
 
 export async function listOutstandingDues(

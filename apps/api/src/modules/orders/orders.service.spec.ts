@@ -8,7 +8,7 @@ describe('OrdersService package pricing and snapshots', () => {
     patient: { findUnique: jest.fn() },
     labTest: { findMany: jest.fn() },
     testPackage: { findMany: jest.fn() },
-    labOrder: { count: jest.fn(), findUnique: jest.fn() },
+    labOrder: { count: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn() },
     sample: { count: jest.fn() },
     invoice: { count: jest.fn() },
     $transaction: jest.fn(),
@@ -22,6 +22,11 @@ describe('OrdersService package pricing and snapshots', () => {
     prisma.labTest.findMany.mockResolvedValue([]);
     prisma.testPackage.findMany.mockResolvedValue([]);
     prisma.labOrder.count.mockResolvedValue(0);
+    prisma.labOrder.findFirst.mockResolvedValue({
+      id: 'order-1',
+      items: [],
+      samples: [],
+    });
     prisma.sample.count.mockResolvedValue(0);
     prisma.invoice.count.mockResolvedValue(0);
     auditService.log.mockResolvedValue(undefined);

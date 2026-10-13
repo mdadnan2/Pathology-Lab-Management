@@ -2,7 +2,7 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { AuditAction, OrderStatus, ReportStatus, ResultStatus } from '@prisma/client';
+import { AuditAction, OrderStatus, ReportStatus, ResultStatus, Role } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ReportsService } from './reports.service';
@@ -26,6 +26,7 @@ describe('ReportsService', () => {
     $transaction: jest.fn(),
   };
   const auditService = { log: jest.fn() };
+  const permissionsService = { assertUserPermission: jest.fn().mockResolvedValue(undefined) };
   let service: ReportsService;
 
   beforeEach(() => {
@@ -49,6 +50,7 @@ describe('ReportsService', () => {
     service = new ReportsService(
       prisma as unknown as PrismaService,
       auditService as unknown as AuditService,
+      permissionsService as never,
     );
   });
 
@@ -125,6 +127,47 @@ describe('ReportsService', () => {
     expect(auditService.log).toHaveBeenCalledWith(expect.objectContaining({
       action: AuditAction.REPORT_APPROVED,
     }));
+  });
+
+  it('prevents a report generator from approving their own report', async () => {
+    prisma.labReport.findUnique.mockResolvedValue({
+      id: 'report-1',
+      generatedById: 'pathologist-1',
+      status: ReportStatus.PENDING_APPROVAL,
+      order: { status: OrderStatus.APPROVED },
+    });
+
+    await expect(service.approve('report-1', 'pathologist-1'))
+      .rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('limits receptionist report lists to finalized reports', async () => {
+    await service.findAll({
+      page: 1,
+      limit: 10,
+      status: ReportStatus.PENDING_APPROVAL,
+      role: Role.RECEPTIONIST,
+    });
+
+    expect(prisma.labReport.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        AND: [
+          { status: { in: [ReportStatus.APPROVED, ReportStatus.DELIVERED] } },
+          { status: ReportStatus.PENDING_APPROVAL },
+        ],
+      },
+    }));
+  });
+
+  it('hides unfinalized report detail from receptionists', async () => {
+    prisma.labReport.findUnique.mockResolvedValue({
+      id: 'report-1',
+      status: ReportStatus.PENDING_APPROVAL,
+    });
+
+    await expect(service.findOne('report-1', Role.RECEPTIONIST))
+      .rejects.toThrow('Report not found');
   });
 
   it('prevents approval if another request changed the report status', async () => {

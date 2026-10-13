@@ -10,6 +10,7 @@ describe('SamplesService transitions', () => {
     $transaction: jest.fn(),
   };
   const auditService = { log: jest.fn() };
+  const permissionsService = { assertUserPermission: jest.fn().mockResolvedValue(undefined) };
   let service: SamplesService;
 
   beforeEach(() => {
@@ -17,6 +18,7 @@ describe('SamplesService transitions', () => {
     service = new SamplesService(
       prisma as unknown as PrismaService,
       auditService as unknown as AuditService,
+      permissionsService as never,
     );
   });
 

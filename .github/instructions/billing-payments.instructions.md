@@ -36,7 +36,7 @@ applyTo: "apps/api/src/modules/billing/**,apps/api/src/modules/payments/**,apps/
 
 - `FinancialAdjustment` fields: `invoiceId`, `type` (`DISCOUNT | REVERSAL | CANCELLATION`), `amount`, `reason`, `authorizedById`, `createdAt`
 - Only ADMIN and OWNER can apply discounts > configured threshold
-- Discount reason is mandatory
+- Discount reason is mandatory and must contain at least five non-whitespace characters
 - Adjustments are append-only — no editing or deletion
 
 ## Cancellations
@@ -44,6 +44,10 @@ applyTo: "apps/api/src/modules/billing/**,apps/api/src/modules/payments/**,apps/
 - Invoice cancellation: sets `status = CANCELLED`, records a `FinancialAdjustment` with type `CANCELLATION`
 - Cannot cancel an invoice with recorded payments unless payments are first reversed
 - Payment reversal: creates a `FinancialAdjustment` with type `REVERSAL`, reduces `paidAmount`
+- Reversal reason is mandatory and must contain at least five non-whitespace characters.
+- Payment recording, discounts, cancellations, and reversals use conditional updates in a
+  transaction so concurrent changes cannot silently overwrite invoice totals or payment
+  state; callers must retry a conflict.
 - All cancellations and reversals create `AuditEvent` records
 
 ## Receipts
