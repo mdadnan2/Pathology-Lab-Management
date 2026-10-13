@@ -63,11 +63,28 @@ describe('AuthService.changePassword', () => {
     expect(prisma.user.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'staff-id' },
-        data: expect.objectContaining({ mustChangePassword: false }),
+        data: expect.objectContaining({
+          mustChangePassword: false,
+          tokenVersion: { increment: 1 },
+        }),
       }),
     );
     expect(auditService.log).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'PASSWORD_CHANGED' }),
+    );
+  });
+
+  it('rotates the active session token version on logout', async () => {
+    prisma.user.update.mockResolvedValue({});
+
+    await service.logout('staff-id');
+
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'staff-id' },
+      data: { tokenVersion: { increment: 1 } },
+    });
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'USER_LOGOUT', entityId: 'staff-id' }),
     );
   });
 

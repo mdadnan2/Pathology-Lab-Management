@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -132,7 +133,13 @@ export class ResultsService {
       include: {
         order: { select: { id: true, status: true } },
         labTest: { include: { parameters: true } },
-        result: { include: { parameters: true } },
+        result: {
+          select: {
+            parameters: true,
+            enteredById: true,
+            status: true,
+          },
+        },
       },
     });
     if (!item) throw new NotFoundException('Order item not found');
@@ -151,6 +158,9 @@ export class ResultsService {
     ) {
       throw new ConflictException('Only draft or rejected results can be edited');
     }
+    if (item.result && item.result.enteredById && item.result.enteredById !== actorId) {
+      throw new ForbiddenException('You can only edit your own draft or rejected result');
+    }
 
     const parameterIds = item.labTest.parameters.map((parameter) => parameter.id);
     const suppliedIds = dto.parameters.map((parameter) => parameter.testParameterId);
@@ -168,10 +178,10 @@ export class ResultsService {
         const changed = await tx.testResult.updateMany({
           where: {
             id: current.id,
+            enteredById: actorId,
             status: { in: [ResultStatus.DRAFT, ResultStatus.REJECTED] },
           },
           data: {
-            enteredById: actorId,
             status: ResultStatus.DRAFT,
             reviewedById: null,
             reviewedAt: null,
@@ -259,6 +269,9 @@ export class ResultsService {
       },
     });
     if (!result) throw new NotFoundException('Result not found');
+    if (result.enteredById && result.enteredById !== actorId) {
+      throw new ForbiddenException('You can only submit your own draft result');
+    }
     if (result.status !== ResultStatus.DRAFT) {
       throw new ConflictException('Only draft results can be submitted; rejected results must be re-entered');
     }
@@ -281,7 +294,7 @@ export class ResultsService {
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const changed = await tx.testResult.updateMany({
-        where: { id, status: ResultStatus.DRAFT },
+        where: { id, enteredById: actorId, status: ResultStatus.DRAFT },
         data: { status: ResultStatus.SUBMITTED, rejectionReason: null },
       });
       if (changed.count !== 1) {

@@ -9,6 +9,7 @@ interface JwtPayload {
   sub: string;
   email: string;
   role: string;
+  tokenVersion?: number;
 }
 
 const cookieExtractor = (req: Request): string | null => {
@@ -39,6 +40,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!user || !user.isActive) {
       throw new UnauthorizedException();
     }
+
+    const tokenVersion = (user as { tokenVersion?: number }).tokenVersion;
+    if (payload.tokenVersion === undefined || payload.tokenVersion !== tokenVersion) {
+      throw new UnauthorizedException('Session is no longer valid');
+    }
+
     return user;
   }
 }

@@ -239,9 +239,13 @@ export class UsersService {
 
     const temporaryPassword = randomBytes(18).toString('base64url');
     const passwordHash = await bcrypt.hash(temporaryPassword, 12);
-    await this.prisma.user.update({
+    await (this.prisma.user as any).update({
       where: { id },
-      data: { passwordHash, mustChangePassword: true },
+      data: {
+        passwordHash,
+        mustChangePassword: true,
+        tokenVersion: { increment: 1 },
+      },
     });
 
     await this.auditService.log({

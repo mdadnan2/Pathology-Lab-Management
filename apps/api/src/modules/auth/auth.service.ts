@@ -36,7 +36,13 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const payload = { sub: user.id, email: user.email, role: user.role };
+    const userWithTokenVersion = user as typeof user & { tokenVersion?: number };
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      tokenVersion: userWithTokenVersion.tokenVersion ?? 0,
+    };
     const token = this.jwtService.sign(payload);
 
     await this.auditService.log({
@@ -53,6 +59,11 @@ export class AuthService {
   }
 
   async logout(userId: string) {
+    await (this.prisma.user as any).update({
+      where: { id: userId },
+      data: { tokenVersion: { increment: 1 } },
+    });
+
     await this.auditService.log({
       actorId: userId,
       action: AuditAction.USER_LOGOUT,
@@ -91,9 +102,13 @@ export class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(dto.newPassword, 12);
-    await this.prisma.user.update({
+    await (this.prisma.user as any).update({
       where: { id: userId },
-      data: { passwordHash, mustChangePassword: false },
+      data: {
+        passwordHash,
+        mustChangePassword: false,
+        tokenVersion: { increment: 1 },
+      },
     });
     await this.auditService.log({
       actorId: userId,

@@ -205,7 +205,7 @@ describe('ResultsService', () => {
     await service.submit('result-1', 'technician-1');
 
     expect(tx.testResult.updateMany).toHaveBeenCalledWith({
-      where: { id: 'result-1', status: ResultStatus.DRAFT },
+      where: { id: 'result-1', enteredById: 'technician-1', status: ResultStatus.DRAFT },
       data: { status: ResultStatus.SUBMITTED, rejectionReason: null },
     });
     expect(auditService.log).toHaveBeenCalledWith(expect.objectContaining({
@@ -300,5 +300,35 @@ describe('ResultsService', () => {
       action: AuditAction.RESULT_APPROVED,
       entityId: 'result-1',
     }));
+  });
+
+  it('prevents a technician from overwriting another technician\'s draft', async () => {
+    prisma.labOrderItem.findUnique.mockResolvedValue(item({
+      result: { id: 'result-1', enteredById: 'technician-1', status: ResultStatus.DRAFT },
+    }));
+
+    await expect(service.saveDraft('item-1', {
+      parameters: [{ testParameterId: 'parameter-1', value: '12' }],
+    }, 'technician-2')).rejects.toThrow('You can only edit your own draft or rejected result');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('prevents a technician from submitting another technician\'s draft', async () => {
+    prisma.testResult.findUnique.mockResolvedValue({
+      id: 'result-1',
+      enteredById: 'technician-1',
+      status: ResultStatus.DRAFT,
+      parameters: [{ testParameterId: 'parameter-1', value: '15' }],
+      orderItem: {
+        id: 'item-1',
+        orderId: 'order-1',
+        order: { status: OrderStatus.PROCESSING },
+        labTest: { parameters: [{ id: 'parameter-1' }] },
+      },
+    });
+
+    await expect(service.submit('result-1', 'technician-2'))
+      .rejects.toThrow('You can only submit your own draft result');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
