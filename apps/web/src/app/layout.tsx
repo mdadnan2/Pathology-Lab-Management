@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import "./globals.css";
 import { QueryProvider } from "@/providers/query-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
@@ -16,6 +17,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <Script id="theme-preference" strategy="beforeInteractive">
+          {`const theme = localStorage.getItem("pathology-lab-theme"); document.documentElement.classList.toggle("dark", theme === "dark");`}
+        </Script>
+      </head>
       <body className="antialiased" suppressHydrationWarning>
         <ThemeProvider>
           <QueryProvider>{children}</QueryProvider>

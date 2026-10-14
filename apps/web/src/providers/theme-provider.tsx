@@ -20,6 +20,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const initialTheme = storedTheme === "dark" ? "dark" : "light";
     setTheme(initialTheme);
     document.documentElement.classList.toggle("dark", initialTheme === "dark");
+
+    function syncTheme(event: StorageEvent) {
+      if (event.key !== THEME_STORAGE_KEY) return;
+      const nextTheme = event.newValue === "dark" ? "dark" : "light";
+      setTheme(nextTheme);
+      document.documentElement.classList.toggle("dark", nextTheme === "dark");
+    }
+
+    window.addEventListener("storage", syncTheme);
+    return () => window.removeEventListener("storage", syncTheme);
   }, []);
 
   function toggleTheme() {

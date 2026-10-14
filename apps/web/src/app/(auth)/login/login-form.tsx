@@ -59,14 +59,14 @@ export function LoginForm() {
   }
 
   return (
-    <form className="space-y-5" onSubmit={form.handleSubmit(onSubmit)} noValidate>
-      <div className="space-y-2">
+    <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)} noValidate>
+      <div className="space-y-1.5">
         <label className="text-sm font-medium" htmlFor="email">
           Email address
         </label>
         <input
           autoComplete="username"
-          className="h-11 w-full rounded-lg border bg-background px-3 text-sm outline-none transition focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+          className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none transition focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
           id="email"
           type="email"
           {...form.register("email")}
@@ -79,13 +79,13 @@ export function LoginForm() {
           </p>
         )}
       </div>
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         <label className="text-sm font-medium" htmlFor="password">
           Password
         </label>
         <input
           autoComplete="current-password"
-          className="h-11 w-full rounded-lg border bg-background px-3 text-sm outline-none transition focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+          className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none transition focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
           id="password"
           type="password"
           {...form.register("password")}
@@ -112,7 +112,7 @@ export function LoginForm() {
           {submitError}
         </p>
       )}
-      <Button className="h-11 w-full" disabled={login.isPending} type="submit">
+      <Button className="h-10 w-full" disabled={login.isPending} type="submit">
         {login.isPending ? "Signing in…" : "Sign in"}
       </Button>
       <p className="text-center text-xs leading-5 text-muted-foreground">
