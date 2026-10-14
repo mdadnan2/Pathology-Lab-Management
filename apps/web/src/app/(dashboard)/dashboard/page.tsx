@@ -22,14 +22,6 @@ export default function DashboardPage() {
     retry: false,
   });
 
-  const health = useQuery({
-    queryKey: ["dashboard-health"],
-    queryFn: async () => (await apiRequest<{ status?: string; database?: string }>("/health")).data,
-    retry: false,
-  });
-
-  const isConnected = health.data?.database === "connected" || health.data?.status === "ok";
-
   return (
     <div className="mx-auto max-w-6xl space-y-8">
       <header className="space-y-2">
@@ -43,14 +35,6 @@ export default function DashboardPage() {
           Real-time statistics and operational summaries from your laboratory.
         </p>
       </header>
-
-      <section className="flex flex-wrap items-center gap-3 rounded-xl border border-emerald-600/20 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/30 dark:text-emerald-200">
-        <span className="inline-flex items-center gap-2 font-medium">
-          <span className={`inline-block h-2.5 w-2.5 rounded-full ${isConnected ? "bg-emerald-500" : "bg-red-500"}`} aria-hidden="true" />
-          {isConnected ? "Connected" : "Unavailable"}
-        </span>
-        <span>Fictional data only</span>
-      </section>
 
       {stats.isError && (
         <div

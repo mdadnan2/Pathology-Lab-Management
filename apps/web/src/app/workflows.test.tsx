@@ -321,10 +321,11 @@ describe("authentication and dashboard screens", () => {
     expect(mocks.apiRequest).toHaveBeenCalledWith("/auth/logout", { method: "POST" });
   });
 
-  it("shows API health and demo notices on the dashboard", async () => {
+  it("does not show the API health banner or demo notice on the dashboard", async () => {
     renderWithQuery(<DashboardPage />);
-    expect(await screen.findByText("Connected")).toBeInTheDocument();
-    expect(screen.getByText("Fictional data only")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Welcome to your lab workspace" })).toBeInTheDocument();
+    expect(screen.queryByText("Connected")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fictional data only")).not.toBeInTheDocument();
   });
 });
 
