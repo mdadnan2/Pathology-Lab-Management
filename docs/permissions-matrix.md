@@ -85,7 +85,7 @@ random temporary password that must be changed at next sign-in.
 
 | Operation                          | OWNER | ADMIN | RECEPTIONIST | TECHNICIAN | PATHOLOGIST |
 |------------------------------------|-------|-------|--------------|------------|-------------|
-| View KPI dashboard                 | ✓     | ✓     | ✗            | ✗          | ✗           |
+| View role-specific dashboard       | ✓     | ✓     | ✓            | ✓          | ✓           |
 | View financial summaries           | ✓     | ✓     | ✗            | ✗          | ✗           |
 | View staff activity                | ✓     | ✓     | ✗            | ✗          | ✗           |
 | View audit log                     | ✓     | ✓     | ✗            | ✗          | ✗           |
@@ -113,3 +113,7 @@ random temporary password that must be changed at next sign-in.
   not match phone numbers.
 - Explicit permission exceptions are restricted to clinical result/report capabilities;
   catalogue, financial, staff, dashboard, and settings access remain role defaults.
+- Dashboard responses are role-scoped: RECEPTIONIST sees reception workflow counts,
+  TECHNICIAN sees sample-processing counts, PATHOLOGIST sees review queue counts, and
+  OWNER/ADMIN see operational counts. Financial summaries and staff activity remain
+  OWNER/ADMIN only.

@@ -25,12 +25,23 @@ export function formatCurrency(value: string | number): string {
   return currencyFormatter.format(Number(value));
 }
 
-export function formatDate(value: string): string {
-  return dateFormatter.format(new Date(value));
+function parseDate(value: string | null | undefined): Date | null {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
-export function formatDateTime(value: string): string {
-  return dateTimeFormatter.format(new Date(value));
+export function formatDate(value: string | null | undefined): string {
+  const date = parseDate(value);
+  return date ? dateFormatter.format(date) : "—";
+}
+
+export function formatDateTime(value: string | null | undefined): string {
+  const date = parseDate(value);
+  return date ? dateTimeFormatter.format(date) : "—";
 }
 
 export function titleCase(value: string): string {

@@ -5,6 +5,8 @@ import { Pagination } from "@/components/shared/pagination";
 import { ConfirmationDialog } from "@/components/shared/confirmation-dialog";
 import { Button } from "@/components/ui/button";
 import { listSamples, updateSampleStatus, type SampleStatus } from "@/lib/api/laboratory";
+import { getCurrentUser } from "@/lib/api/auth";
+import { ApiError } from "@/lib/api/client";
 import { formatDateTime, titleCase } from "@/lib/format";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
@@ -25,6 +27,8 @@ export default function SamplesPage() {
   const [page, setPage] = useState(1);
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [sampleToReject, setSampleToReject] = useState<{ id: string; rejectionReason: string } | null>(null);
+  const profile = useQuery({ queryKey: ["auth", "me"], queryFn: getCurrentUser, retry: false });
+  const canUpdateSamples = profile.data?.permissions.includes("samples.update_status") ?? false;
   const samples = useQuery({ queryKey: ["samples", page, status], queryFn: () => listSamples({ page, status }) });
   const update = useMutation({
     mutationFn: (input: { id: string; status: SampleStatus; rejectionReason?: string }) =>
@@ -96,7 +100,7 @@ export default function SamplesPage() {
                       </div>
                       <Link className="text-sm font-medium text-primary underline" href={`/orders/${sample.order.id}`}>{sample.order.orderNumber}</Link>
                     </div>
-                    {nextStatuses.length > 0 && (
+                    {canUpdateSamples && nextStatuses.length > 0 && (
                       <div className="flex flex-wrap items-center gap-2">
                         {nextStatuses.map((next) => (
                           <Button
@@ -123,7 +127,16 @@ export default function SamplesPage() {
             </div>
           )}
         </QueryState>
-        {update.isError && <p className="border-t p-4 text-sm text-destructive" role="alert">Could not update sample: {update.error.message}</p>}
+        {!profile.isPending && !canUpdateSamples && (
+          <p className="border-t p-4 text-sm text-muted-foreground" role="status">
+            You can view samples, but your role does not allow changing sample statuses.
+          </p>
+        )}
+        {update.isError && <p className="border-t p-4 text-sm text-destructive" role="alert">
+          {update.error instanceof ApiError && update.error.statusCode === 403
+            ? "You do not have permission to change sample statuses."
+            : `Could not update sample: ${update.error.message}`}
+        </p>}
         {samples.data?.meta && samples.data.meta.total > 0 && (
           <Pagination
             page={samples.data.meta.page}

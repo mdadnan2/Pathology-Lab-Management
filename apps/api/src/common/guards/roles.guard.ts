@@ -22,13 +22,11 @@ export class RolesGuard implements CanActivate {
       .getRequest<{ user?: { role: Role } }>();
 
     if (!user) {
-      throw new ForbiddenException('Access denied');
+      throw new ForbiddenException('You do not have permission to perform this action');
     }
 
     if (!requiredRoles.includes(user.role)) {
-      throw new ForbiddenException(
-        `Access denied. Required roles: ${requiredRoles.join(', ')}`,
-      );
+      throw new ForbiddenException('You do not have permission to perform this action');
     }
 
     return true;

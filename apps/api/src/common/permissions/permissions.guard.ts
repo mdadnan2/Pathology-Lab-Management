@@ -21,14 +21,14 @@ export class PermissionsGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest<{ user?: User }>();
     if (!request.user?.id || !request.user.role) {
-      throw new ForbiddenException('Access denied');
+      throw new ForbiddenException('You do not have permission to perform this action');
     }
     const permissions = await this.permissionsService.getPermissions(
       request.user.id,
       request.user.role as Role,
     );
     if (!required.every((permission) => permissions.includes(permission))) {
-      throw new ForbiddenException('Access denied');
+      throw new ForbiddenException('You do not have permission to perform this action');
     }
     return true;
   }

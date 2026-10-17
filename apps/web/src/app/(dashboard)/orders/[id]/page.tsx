@@ -5,6 +5,8 @@ import { ConfirmationDialog } from "@/components/shared/confirmation-dialog";
 import { Pagination } from "@/components/shared/pagination";
 import { Button } from "@/components/ui/button";
 import { getOrder, updateSampleStatus, PAGE_SIZE, type LabOrder, type SampleStatus } from "@/lib/api/laboratory";
+import { getCurrentUser } from "@/lib/api/auth";
+import { ApiError } from "@/lib/api/client";
 import { formatCurrency, formatDateTime, titleCase } from "@/lib/format";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
@@ -23,6 +25,8 @@ export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
   const queryClient = useQueryClient();
   const [rejectionReasons, setRejectionReasons] = useState<Record<string, string>>({});
+  const profile = useQuery({ queryKey: ["auth", "me"], queryFn: getCurrentUser, retry: false });
+  const canUpdateSamples = profile.data?.permissions.includes("samples.update_status") ?? false;
   const order = useQuery({
     queryKey: ["orders", params.id],
     queryFn: () => getOrder(params.id),
@@ -51,6 +55,7 @@ export default function OrderDetailPage() {
           order={order.data}
           rejectionReasons={rejectionReasons}
           setRejectionReasons={setRejectionReasons}
+          canUpdateSamples={canUpdateSamples}
           onUpdate={(id, status) => updateSample.mutate({
             id,
             status,
@@ -59,7 +64,11 @@ export default function OrderDetailPage() {
           pending={updateSample.isPending}
         />}
       </QueryState>
-      {updateSample.isError && <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive" role="alert">Sample update failed: {updateSample.error.message}</p>}
+      {updateSample.isError && <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive" role="alert">
+        {updateSample.error instanceof ApiError && updateSample.error.statusCode === 403
+          ? "You do not have permission to change sample statuses."
+          : `Sample update failed: ${updateSample.error.message}`}
+      </p>}
     </div>
   );
 }
@@ -68,12 +77,14 @@ function OrderDetails({
   order,
   rejectionReasons,
   setRejectionReasons,
+  canUpdateSamples,
   onUpdate,
   pending,
 }: {
   order: LabOrder;
   rejectionReasons: Record<string, string>;
   setRejectionReasons: (value: Record<string, string>) => void;
+  canUpdateSamples: boolean;
   onUpdate: (id: string, status: SampleStatus) => void;
   pending: boolean;
 }) {
@@ -158,7 +169,7 @@ function OrderDetails({
                 <article className="rounded-xl border bg-card p-5" key={sample.id ?? sample.sampleId}>
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div><p className="font-medium">{sample.sampleId}</p><p className="mt-1 text-sm text-muted-foreground">Current status: {titleCase(sample.status)}</p></div>
-                    <div className="flex flex-wrap gap-2">
+                    {canUpdateSamples && <div className="flex flex-wrap gap-2">
                       {options.map((status) => (
                         <Button
                           disabled={pending || (status === "REJECTED" && !rejectionReasons[sample.id ?? ""]?.trim())}
@@ -172,9 +183,10 @@ function OrderDetails({
                           variant={status === "REJECTED" ? "outline" : "default"}
                         >{status === "RECOLLECTION_REQUESTED" ? "Request recollection" : titleCase(status)}</Button>
                       ))}
-                    </div>
+                    </div>}
                   </div>
-                  {sample.status !== "COMPLETED" && sample.status !== "REJECTED" && (
+                  {!canUpdateSamples && <p className="mt-3 text-sm text-muted-foreground">Your role allows viewing this sample but not changing its status.</p>}
+                  {canUpdateSamples && sample.status !== "COMPLETED" && sample.status !== "REJECTED" && (
                     <label className="mt-4 block max-w-xl space-y-2 text-sm">
                       <span>Rejection reason (required only when rejecting)</span>
                       <input className="h-10 w-full rounded-lg border bg-background px-3" onChange={(event) => setRejectionReasons({ ...rejectionReasons, [sample.id ?? ""]: event.target.value })} value={rejectionReasons[sample.id ?? ""] ?? ""} />

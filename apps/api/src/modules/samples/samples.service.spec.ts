@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { OrderStatus, SampleStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -37,6 +37,20 @@ describe('SamplesService transitions', () => {
       ),
     ).rejects.toThrow(ConflictException);
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a direct status-change attempt when the actor lacks sample-management permission', async () => {
+    permissionsService.assertUserPermission.mockRejectedValueOnce(
+      new ForbiddenException('You do not have permission to perform this action'),
+    );
+
+    await expect(
+      service.updateStatus('sample-1', { status: SampleStatus.COLLECTED }, 'receptionist-1'),
+    ).rejects.toThrow(ForbiddenException);
+
+    expect(prisma.sample.findUnique).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(auditService.log).not.toHaveBeenCalled();
   });
 
   it('rejects skipping directly from pending to completed', async () => {

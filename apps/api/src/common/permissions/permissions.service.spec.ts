@@ -19,7 +19,13 @@ describe('PermissionsService', () => {
     prisma.user.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
       Promise.resolve({
         id: where.id,
-        role: where.id === 'owner-1' ? Role.OWNER : Role.TECHNICIAN,
+        role: ({
+          'owner-1': Role.OWNER,
+          'admin-1': Role.ADMIN,
+          'receptionist-1': Role.RECEPTIONIST,
+          'technician-1': Role.TECHNICIAN,
+          'pathologist-1': Role.PATHOLOGIST,
+        } as Record<string, Role>)[where.id] ?? Role.TECHNICIAN,
         isActive: true,
       }),
     );
@@ -29,6 +35,21 @@ describe('PermissionsService', () => {
     );
     service = new PermissionsService(prisma as unknown as PrismaService);
   });
+
+  it.each([
+    ['owner-1', Role.OWNER, true, true],
+    ['admin-1', Role.ADMIN, true, true],
+    ['receptionist-1', Role.RECEPTIONIST, true, false],
+    ['technician-1', Role.TECHNICIAN, true, true],
+    ['pathologist-1', Role.PATHOLOGIST, true, false],
+  ] as const)(
+    'enforces dashboard and sample-status defaults for %s',
+    async (userId, role, canViewDashboard, canUpdateSamples) => {
+      const permissions = await service.getPermissions(userId, role);
+      expect(permissions.includes(PERMISSIONS.DASHBOARD_VIEW)).toBe(canViewDashboard);
+      expect(permissions.includes(PERMISSIONS.SAMPLES_UPDATE_STATUS)).toBe(canUpdateSamples);
+    },
+  );
 
   it('applies the latest append-only event over role defaults', async () => {
     prisma.userPermissionEvent.findMany.mockResolvedValue([

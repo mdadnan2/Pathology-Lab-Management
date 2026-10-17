@@ -75,6 +75,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { DashboardShell } from "@/components/layout/dashboard-shell";
+import { ApiError } from "@/lib/api/client";
 import { QueryState } from "@/components/shared/query-state";
 import { Pagination } from "@/components/shared/pagination";
 import { ThemeToggle } from "@/components/shared/theme-toggle";
@@ -327,6 +328,27 @@ describe("authentication and dashboard screens", () => {
     expect(screen.queryByText("Connected")).not.toBeInTheDocument();
     expect(screen.queryByText("Fictional data only")).not.toBeInTheDocument();
   });
+
+  it("loads the receptionist dashboard with only reception metrics", async () => {
+    mocks.currentUserQuery.mockResolvedValue({
+      ...owner,
+      role: "RECEPTIONIST",
+      permissions: [...owner.permissions, "dashboard.view"],
+    });
+    mocks.apiRequest.mockImplementation(async (path: string) =>
+      path === "/dashboard"
+        ? { data: { totalPatients: 24, pendingOrders: 3, pendingSamples: 2 } }
+        : { data: {} },
+    );
+
+    renderWithQuery(<DashboardPage />);
+
+    expect(await screen.findByText("receptionist overview")).toBeInTheDocument();
+    expect(await screen.findByText("Total patients")).toBeInTheDocument();
+    expect(screen.getByText("Pending samples")).toBeInTheDocument();
+    expect(screen.queryByText("Processing orders")).not.toBeInTheDocument();
+    expect(screen.queryByText(/backend is running/)).not.toBeInTheDocument();
+  });
 });
 
 describe("patient and staff screens", () => {
@@ -483,6 +505,27 @@ describe("catalogue and laboratory workflow screens", () => {
     renderWithQuery(<OrderDetailPage />);
     expect(await screen.findByText(order.orderNumber)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Collected" })).toBeInTheDocument();
+  });
+
+  it("hides sample status actions from receptionists on order details", async () => {
+    mocks.currentUserQuery.mockResolvedValue({
+      ...owner,
+      role: "RECEPTIONIST",
+      permissions: ["samples.view", "orders.view"],
+    });
+    renderWithQuery(<OrderDetailPage />);
+
+    expect(await screen.findByText(/allows viewing this sample but not changing its status/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Collected" })).not.toBeInTheDocument();
+  });
+
+  it("shows a permission-specific message when a sample update is forbidden", async () => {
+    const user = userEvent.setup();
+    mocks.updateSampleStatus.mockRejectedValueOnce(new ApiError("Forbidden", 403));
+    renderWithQuery(<OrderDetailPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Collected" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("You do not have permission to change sample statuses.");
   });
 
   it("renders the sample-tracking empty state", async () => {
